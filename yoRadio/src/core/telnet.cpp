@@ -248,7 +248,8 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       printf(clientId, "new smartstart value is: %d\n> ", config.store.smartstart);
       return;
     }
-        // OMNIA v8.2 RADICAL — native yoradio: 'list' always shows WEB stations from SPIFFS PLAYLIST_PATH
+    
+    // OMNIA v8.2 RADICAL — native yoradio: 'list' always shows WEB stations from SPIFFS PLAYLIST_PATH
     // SD files list is via Web UI HTTP /data/playlistsd.csv and WebSocket sdpos, not via telnet list
     // So we keep 'list' as WEB list (original behavior) and add 'sdlist' for SD real names
     if (strcmp(str, "cli.list") == 0 || strcmp(str, "list") == 0) {
