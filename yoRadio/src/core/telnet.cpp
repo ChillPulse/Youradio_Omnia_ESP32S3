@@ -263,7 +263,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
         uint16_t len = config.playlistLength();
         for(uint16_t i=1;i<=len && i<=100;i++){
           // config.stationForId(i) ? We don't have easy API, so just print index
-          printf(clientId, "#CLI.LISTNUM# SD: %u\n", i);
+          printf(clientId, "#CLI.LISTNUM#: %3d: SD track %u\n", i);
         }
         if(len>100) printf(clientId, "#CLI.LISTNUM#: ... total %u\n", len);
       }else{

@@ -179,10 +179,18 @@ bool MyNetwork::wifiBegin(bool silent){
 }
 
 void searchWiFi(void * pvParameters){
+  // OMNIA FIX: предотвращаем бесконечное создание задач при отсутствии WiFi (было зависание + websocket flood)
+  static uint8_t searchAttempts = 0;
   if(!network.wifiBegin(true)){
-    delay(10000);
-    xTaskCreatePinnedToCore(searchWiFi, "searchWiFi", 1024 * 4, NULL, 0, NULL, 0);
+    searchAttempts++;
+    if(searchAttempts < 6){ // максимум 6 попыток (1 минута), потом останавливаемся чтобы не плодить задачи и не вешать SD режим
+      delay(10000);
+      xTaskCreatePinnedToCore(searchWiFi, "searchWiFi", 1024 * 4, NULL, 0, NULL, 0);
+    }else{
+      Serial.println("##[BOOT]#\tsearchWiFi stopped after 6 attempts to avoid task leak, staying in SD mode");
+    }
   }else{
+    searchAttempts = 0;
     network.status = CONNECTED;
     netserver.begin(true);
     telnet.begin(true);
@@ -232,8 +240,10 @@ void MyNetwork::begin() {
       if(sdPresent){
         Serial.println("##[BOOT]#\tWiFi failed but SD slot present → fallback to SDREADY (FIX SD without WiFi)");
         status = SDREADY;
-        // Запускаем поиск WiFi в фоне как и для SD режима, чтобы позже подхватить WiFi если появится
-        xTaskCreatePinnedToCore(searchWiFi, "searchWiFi", 1024 * 4, NULL, 0, NULL, 0);
+        // OMNIA FIX: не запускаем searchWiFi рекурсивно в этом месте, чтобы избежать бесконечного создания задач и websocket flood
+        // searchWiFi сам по себе рекурсивно создает задачи каждые 10с при неудаче — это может вызвать зависание и бесконечный [WEBSOCKET] client connected
+        // Вместо этого просто ставим SDREADY и не запускаем дополнительный поиск сейчас
+        // Если WiFi появится позже, пользователь перезагрузит или мы подхватим в ticks()
       }else{
         raiseSoftAP();
         Serial.println("##[BOOT]#\tdone");
