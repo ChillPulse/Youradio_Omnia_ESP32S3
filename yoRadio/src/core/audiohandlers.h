@@ -1,6 +1,8 @@
 #ifndef AUDIOHANDLERS_H
 #define AUDIOHANDLERS_H
 
+#include "omniaplus/shuffle_fix.h"
+
 //=============================================//
 //              Audio handlers                 //
 //=============================================//
