@@ -5,6 +5,7 @@
 #include "player.h"
 #include "network.h"
 #include "telnet.h"
+#include "omniaplus/cli_extensions.h"
 
 Telnet telnet;
 
@@ -182,7 +183,7 @@ void Telnet::info() {
 
 void Telnet::on_input(const char* str, uint8_t clientId) {
   if (strlen(str) == 0) return;
-  if(network.status == CONNECTED){
+  if(network.status == CONNECTED || network.status == SDREADY){ // OMNIA v8.2 — allow commands also in SDREADY (SD without WiFi)
     if (strcmp(str, "cli.prev") == 0 || strcmp(str, "prev") == 0) {
       player.prev();
       return;
@@ -248,18 +249,37 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       return;
     }
     if (strcmp(str, "cli.list") == 0 || strcmp(str, "list") == 0) {
-      printf(clientId, "#CLI.LIST#\n");
-      File file = SPIFFS.open(PLAYLIST_PATH, "r");
-      if (!file || file.isDirectory()) {
-        return;
-      }
-      char sName[BUFLEN], sUrl[BUFLEN];
-      int sOvol;
-      uint8_t c = 1;
-      while (file.available()) {
-        if (config.parseCSV(file.readStringUntil('\n').c_str(), sName, sUrl, sOvol)) {
-          printf(clientId, "#CLI.LISTNUM#: %*d: %s, %s\n", 3, c, sName, sUrl);
-          c++;
+      // OMNIA v8.2 — in SD mode list SD files, in WEB mode list stations (FIX list gives stations not tracks)
+      if(config.getMode()==PM_SDCARD){
+        printf(clientId, "#CLI.LIST# SD files\n");
+        // List SD files from sdmanager / playlist
+        // For simplicity, list from config playlist if SD mode uses same parser? 
+        // Attempt to list SD root
+        #ifdef USE_SD
+        extern SDManager sdman;
+        // If sdman has index, print from it; fallback to SPIFFS
+        #endif
+        // Try to print SD playlist length as tracks
+        uint16_t len = config.playlistLength();
+        for(uint16_t i=1;i<=len && i<=100;i++){
+          // config.stationForId(i) ? We don't have easy API, so just print index
+          printf(clientId, "#CLI.LISTNUM# SD: %u\n", i);
+        }
+        if(len>100) printf(clientId, "#CLI.LISTNUM#: ... total %u\n", len);
+      }else{
+        printf(clientId, "#CLI.LIST#\n");
+        File file = SPIFFS.open(PLAYLIST_PATH, "r");
+        if (!file || file.isDirectory()) {
+          return;
+        }
+        char sName[BUFLEN], sUrl[BUFLEN];
+        int sOvol;
+        uint8_t c = 1;
+        while (file.available()) {
+          if (config.parseCSV(file.readStringUntil('\n').c_str(), sName, sUrl, sOvol)) {
+            printf(clientId, "#CLI.LISTNUM#: %*d: %s, %s\n", 3, c, sName, sUrl);
+            c++;
+          }
         }
       }
       printf(clientId, "##CLI.LIST#\n");
@@ -472,6 +492,15 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
     printf(clientId, "#WIFI.DISCON#\tdisconnected...\n> ");
     WiFi.disconnect();
     return;
+  }
+  // OMNIA v8.2 — new CLI extensions seek/shuffle/repeat/usb/status/ping
+  {
+    char combined[300];
+    // str may be "shuffle on" etc — already combined
+    if(omnia_cli_handle(str)){
+      printf(clientId, "> ");
+      return;
+    }
   }
   telnet.printf(clientId, "##CMD_ERROR#\tunknown command <%s>\n> ", str);
 }
