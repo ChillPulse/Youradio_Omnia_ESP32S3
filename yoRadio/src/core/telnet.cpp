@@ -248,7 +248,8 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       printf(clientId, "new smartstart value is: %d\n> ", config.store.smartstart);
       return;
     }
-    // OMNIA v8.2 RADICAL — list always WEB stations (native), sdlist for SD real names
+
+    // OMNIA v8.2 RADICAL — list = WEB stations (native), sdlist = real SD names
     if (strcmp(str, "cli.list") == 0 || strcmp(str, "list") == 0) {
       printf(clientId, "#CLI.LIST# WEB stations
 ");
@@ -311,6 +312,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
 > ");
       return;
     }
+
     if (strcmp(str, "cli.info") == 0 || strcmp(str, "info") == 0) {
       printf(clientId, "##CLI.INFO#\n");
       char timeStringBuff[50];
@@ -522,13 +524,6 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
   {
     char combined[300];
     // str may be "shuffle on" etc — already combined
-    if(omnia_cli_handle(str)){
-      printf(clientId, "> ");
-      return;
-    }
-  }
-  // OMNIA hook
-  {
     if(omnia_cli_handle(str)){
       printf(clientId, "> ");
       return;
