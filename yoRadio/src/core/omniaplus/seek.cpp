@@ -1,5 +1,7 @@
 #include "seek.h"
 #include "../player.h"
+#include "../config.h"
+#include <Arduino.h>
 
 static bool seekingActive = false;
 static bool seekDirForward = true;
@@ -39,14 +41,43 @@ bool omnia_seek_handle(const char* cmd){
 
 void omnia_seek_absolute(uint32_t ms){
   Serial.printf("##SEEK#: absolute %lu ms\n", (unsigned long)ms);
+  if(!player.isRunning()) return;
+  uint32_t durMs = player.getAudioFileDuration()*1000UL;
+  if(durMs==0){
+    // Fallback: use file size
+    uint32_t fsize = player.getFileSize();
+    uint32_t pos = player.getFilePos();
+    // Can't compute, just try setFilePos by percent if ms < 1000 treat as percent?
+    return;
+  }
+  if(ms>durMs) ms=durMs;
+  uint32_t fileSize = player.getFileSize();
+  if(fileSize==0) return;
+  // Approximate filePos = ms/dur * fileSize
+  uint32_t newPos = (uint64_t)ms * fileSize / durMs;
+  // Soft-mute to avoid click
+  player.setOutputPins(false);
+  delay(50);
+  bool ok = player.setFilePos(newPos);
+  delay(30);
+  player.setOutputPins(true);
+  Serial.printf("##SEEK#: setFilePos %lu (fileSize %lu dur %lu) ok=%d\n", (unsigned long)newPos, (unsigned long)fileSize, (unsigned long)durMs, ok);
 }
 
 void omnia_seek_relative(int32_t deltaMs){
   Serial.printf("##SEEK#: relative %+ld ms\n", (long)deltaMs);
+  uint32_t cur = player.getAudioCurrentTime()*1000UL;
+  int32_t newMs = (int32_t)cur + deltaMs;
+  if(newMs<0) newMs=0;
+  omnia_seek_absolute((uint32_t)newMs);
 }
 
 void omnia_seek_percent(uint16_t permille){
   Serial.printf("##SEEK#: percent %u/1000\n", permille);
+  uint32_t durMs = player.getAudioFileDuration()*1000UL;
+  if(durMs==0) return;
+  uint32_t ms = (uint64_t)permille * durMs / 1000;
+  omnia_seek_absolute(ms);
 }
 
 void omnia_seek_start(bool forward){

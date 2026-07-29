@@ -1,7 +1,7 @@
 #include "progress.h"
 #include "../player.h"
-// #include "../../audioI2S/Audio.h" removed — player.h already includes AudioEx.h
 #include "../config.h"
+#include <Arduino.h>
 
 static uint32_t lastProgressMs = 0;
 static bool isSeeking = false;
@@ -31,17 +31,32 @@ void omnia_usb_status_send(const char* state, const char* fs, uint64_t size, int
 
 void omnia_progress_loop(){
   uint32_t now = millis();
-  uint32_t interval = isSeeking ? 100 : 300;
+  uint32_t interval = isSeeking ? 100 : 500; // 2Hz normally, 10Hz when seeking
   if(now - lastProgressMs < interval) return;
   lastProgressMs = now;
-  uint32_t cur = 0, dur = 0;
-  // TODO: replace with real AudioEx calls: player.getAudioCurrentTime() etc.
+  if(!player.isRunning()) return;
+  if(config.getMode()!=1) return; // only SD mode for now (PM_SDCARD =1)
+  uint32_t curSec = player.getAudioCurrentTime();
+  uint32_t durSec = player.getAudioFileDuration();
+  uint32_t filePos = player.getFilePos();
+  uint32_t fileSize = player.getFileSize();
+  if(durSec==0 && fileSize==0) return;
+  uint32_t curMs = curSec*1000UL;
+  uint32_t durMs = durSec*1000UL;
+  uint16_t percentX10 = 0;
+  if(durMs>0) percentX10 = (uint16_t)(curMs*1000/durMs);
+  else if(fileSize>0) percentX10 = (uint16_t)(filePos*1000/fileSize);
+  uint16_t idx = config.lastStation();
+  uint16_t total = config.playlistLength();
   ProgressInfo p;
-  p.curMs = cur;
-  p.durMs = dur;
+  p.curMs = curMs;
+  p.durMs = durMs;
   p.state = 1;
-  p.percentX10 = dur ? (uint16_t)(cur*1000/dur) : 0;
-  p.fileIdx = 1;
-  p.fileTotal = 1;
-  //if(dur>0 || cur>0) omnia_progress_send(p);
+  p.percentX10 = percentX10;
+  p.fileIdx = idx;
+  p.fileTotal = total;
+  // Send only if duration known
+  if(durMs>0 || fileSize>0){
+    omnia_progress_send(p);
+  }
 }

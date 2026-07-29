@@ -222,7 +222,48 @@ void Player::loop() {
   syncRateToStmPins();
   omnia_progress_loop();
   omnia_usb_host_loop();
-  if(!isRunning() && _status==PLAYING) _stop(true);
+  if(!isRunning() && _status==PLAYING){
+    // OMNIA v8.2 — auto next respecting shuffle + repeat combination
+    // shuffle OFF + repeat OFF = stop at end
+    // shuffle OFF + repeat ALL = loop in order
+    // shuffle OFF + repeat ONE = repeat current
+    // shuffle ON + repeat OFF = shuffle without repeat (play all shuffled once then stop)
+    // shuffle ON + repeat ALL = shuffle with repeat (reshuffle after end)
+    // shuffle ON + repeat ONE = repeat current (shuffle ignored)
+    extern RepeatMode omnia_shuffle_get_repeat();
+    RepeatMode r = omnia_shuffle_get_repeat();
+    bool isShuffle = config.store.sdsnuffle;
+    if(r==REPEAT_ONE){
+      // repeat current
+      sendCommand({PR_PLAY, config.lastStation()});
+    }else if(r==REPEAT_ALL){
+      // next (will handle shuffle if ON)
+      uint16_t nxt = isShuffle ? omnia_shuffle_next() : (config.lastStation() % config.playlistLength() + 1);
+      if(nxt==0) nxt=1;
+      config.setLastStation(nxt);
+      sendCommand({PR_PLAY, nxt});
+    }else{ // REPEAT_OFF
+      if(isShuffle){
+        uint16_t nxt = omnia_shuffle_next();
+        if(nxt!=0){
+          config.setLastStation(nxt);
+          sendCommand({PR_PLAY, nxt});
+        }else{
+          _stop(true); // end of shuffled list
+        }
+      }else{
+        // shuffle OFF + repeat OFF: if not at end, play next, else stop
+        if(config.lastStation() < config.playlistLength()){
+          uint16_t nxt = config.lastStation()+1;
+          config.setLastStation(nxt);
+          sendCommand({PR_PLAY, nxt});
+        }else{
+          _stop(true);
+        }
+      }
+    }
+    return;
+  }
   if(_volTimer){
     if((millis()-_volTicks)>1500){
       config.saveVolume();
