@@ -249,9 +249,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       return;
     }
     
-    // OMNIA v8.2 RADICAL — native yoradio: 'list' always shows WEB stations from SPIFFS PLAYLIST_PATH
-    // SD files list is via Web UI HTTP /data/playlistsd.csv and WebSocket sdpos, not via telnet list
-    // So we keep 'list' as WEB list (original behavior) and add 'sdlist' for SD real names
+    // OMNIA v8.2 RADICAL — native yoradio: 'list' always WEB stations, 'sdlist' SD real names
     if (strcmp(str, "cli.list") == 0 || strcmp(str, "list") == 0) {
       printf(clientId, "#CLI.LIST# WEB stations
 ");
@@ -277,7 +275,6 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
 > ");
       return;
     }
-    // NEW sdlist — real SD file names from PLAYLIST_SD_PATH via SDPLFS (as Web UI does)
     if (strcmp(str, "sdlist") == 0 || strcmp(str, "list sd") == 0 || strcmp(str, "cli.sdlist") == 0) {
       uint16_t total = config.playlistLength();
       printf(clientId, "#CLI.LIST# SD files (%u total) from %s
@@ -287,7 +284,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
         file = SPIFFS.open(PLAYLIST_SD_PATH, "r");
       }
       if (!file || file.isDirectory()) {
-        printf(clientId, "##CLI.LIST# no SD playlist file, indexing...
+        printf(clientId, "##CLI.LIST# no SD playlist
 > ");
         return;
       }
@@ -309,7 +306,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
         c++;
       }
       file.close();
-      if(total>200) printf(clientId, "#CLI.LISTNUM#: ... total %u tracks
+      if(total>200) printf(clientId, "#CLI.LISTNUM#: ... total %u
 ", total);
       printf(clientId, "##CLI.LIST#
 > ");
