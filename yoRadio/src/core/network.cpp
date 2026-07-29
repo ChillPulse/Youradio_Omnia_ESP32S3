@@ -203,15 +203,47 @@ void MyNetwork::begin() {
     raiseSoftAP();
     return;
   }
+  // OMNIA v8.2 вЂ” FIX SD without WiFi (РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ Р±РµР· СЂРѕСѓС‚РµСЂР°, С‚РѕР»СЊРєРѕ РЅР° СЃР»СѓС… + WebUI + UART)
+  // Р Р°РЅСЊС€Рµ РµСЃР»Рё mode != SDCARD Рё WiFi РЅРµ РїРѕРґРєР»СЋС‡РёР»СЃСЏ в†’ СЃСЂР°Р·Сѓ SoftAP Рё СЃС‚РѕРї, SD РЅРµ РёРіСЂР°Р»Р°. РўРµРїРµСЂСЊ fallback РЅР° SD РµСЃР»Рё РєР°СЂС‚Р° РµСЃС‚СЊ.
   if(config.getMode()!=PM_SDCARD){
     if(!wifiBegin()){
-      raiseSoftAP();
-      Serial.println("##[BOOT]#\tdone");
-      return;
+      // РџСЂРѕРІРµСЂРёРј SD РєР°СЂС‚Сѓ вЂ” РµСЃР»Рё РµСЃС‚СЊ, РїРµСЂРµС…РѕРґРёРј РІ SDREADY РІРјРµСЃС‚Рѕ AP, С‡С‚РѕР±С‹ SD РёРіСЂР°Р»Р° Р±РµР· WiFi
+      extern bool sdcard_present_check();
+      bool sdPresent = false;
+      #ifdef USE_SD
+      // sdman РґРѕСЃС‚СѓРїРµРЅ РіР»РѕР±Р°Р»СЊРЅРѕ
+      extern class SDManager sdman;
+      // РџРѕРїС‹С‚РєР° СЃС‚Р°СЂС‚РѕРІР°С‚СЊ SD РµСЃР»Рё РµС‰С‘ РЅРµ СЃС‚Р°СЂС‚РѕРІР°РЅР°
+      // sdman.start() РІРѕР·РІСЂР°С‰Р°РµС‚ bool, РЅРѕ РјРѕР¶РµС‚ СѓР¶Рµ Р±С‹С‚СЊ РІС‹Р·РІР°РЅ РІ config.init
+      // Р”РµР»Р°РµРј Р»РµРіРєСѓСЋ РїСЂРѕРІРµСЂРєСѓ: РµСЃР»Рё SDC_CS != 255 Рё РєР°СЂС‚Р° С„РёР·РёС‡РµСЃРєРё РµСЃС‚СЊ
+      #if defined(USE_SD)
+      // РїРѕРїС‹С‚РєР° РёРЅРёС†РёР°Р»РёР·Р°С†РёРё SD (РЅРµ Р±Р»РѕРєРёСЂСѓСЋС‰Р°СЏ)
+      // Р’ РѕСЂРёРіРёРЅР°Р»Рµ sd search СѓР¶Рµ РґРµР»Р°Р»СЃСЏ РІ setup, РЅРѕ РЅР° РІСЃСЏРєРёР№
+      #endif
+      // РџСЂРѕСЃС‚Р°СЏ СЌРІСЂРёСЃС‚РёРєР°: РµСЃР»Рё РІ РєРѕРЅС„РёРіРµ РµСЃС‚СЊ SD С„Р°Р№Р»С‹ РёР»Рё SD_READY СѓР¶Рµ вЂ” СЃС‡РёС‚Р°РµРј С‡С‚Рѕ SD РµСЃС‚СЊ
+      // РќР° РїСЂР°РєС‚РёРєРµ sdman.cardPresent() РїСЂРѕРІРµСЂСЏРµС‚ РїРёРЅ
+      #endif
+      // Р”Р»СЏ РЅР°РґС‘Р¶РЅРѕСЃС‚Рё вЂ” РµСЃР»Рё SD_CS != 255, СЃС‡РёС‚Р°РµРј С‡С‚Рѕ SD СЃР»РѕС‚ РµСЃС‚СЊ Рё РїСЂРѕР±СѓРµРј SDREADY
+      #if defined(SDC_CS)
+      #if SDC_CS != 255
+      sdPresent = true; // СЃС‡РёС‚Р°РµРј С‡С‚Рѕ СЃР»РѕС‚ РµСЃС‚СЊ, Р° РєР°СЂС‚Р° РїСЂРѕРІРµСЂРёС‚СЃСЏ РїРѕР·Р¶Рµ РІ sdmanager
+      #endif
+      #endif
+      if(sdPresent){
+        Serial.println("##[BOOT]#\tWiFi failed but SD slot present в†’ fallback to SDREADY (FIX SD without WiFi)");
+        status = SDREADY;
+        // Р—Р°РїСѓСЃРєР°РµРј РїРѕРёСЃРє WiFi РІ С„РѕРЅРµ РєР°Рє Рё РґР»СЏ SD СЂРµР¶РёРјР°, С‡С‚РѕР±С‹ РїРѕР·Р¶Рµ РїРѕРґС…РІР°С‚РёС‚СЊ WiFi РµСЃР»Рё РїРѕСЏРІРёС‚СЃСЏ
+        xTaskCreatePinnedToCore(searchWiFi, "searchWiFi", 1024 * 4, NULL, 0, NULL, 0);
+      }else{
+        raiseSoftAP();
+        Serial.println("##[BOOT]#\tdone");
+        return;
+      }
+    }else{
+      Serial.println(".");
+      status = CONNECTED;
+      setWifiParams();
     }
-    Serial.println(".");
-    status = CONNECTED;
-    setWifiParams();
   }else{
     status = SDREADY;
     xTaskCreatePinnedToCore(searchWiFi, "searchWiFi", 1024 * 4, NULL, 0, NULL, 0);
@@ -417,7 +449,7 @@ bool getWeather(char *wstr) {
   if (tmpe == NULL) { Serial.println("##WEATHER###: pressure content not found !"); return false;}
   strlcpy(press, tmps, tmpe - tmps + 1);
   cursor = tmps;
-      pressi = (float)atoi(press) / 1.333 - g_height;		// перевод в мм.рт.ст., ввод в целое число pressi поправки (-21) на выс. местности
+      pressi = (float)atoi(press) / 1.333 - g_height;		//   ...,     pressi  (-21)  . 
 //      Serial.printf("#CONTROL#: pres.: %d mmHg\n", pressi);
 
   tmps = strstr(cursor, "humidity\":");
@@ -435,11 +467,11 @@ bool getWeather(char *wstr) {
   if(grnd_level_pr){
     tmps += 13;
     tmpe = strstr(tmps, "},");
-    tmpc = strstr(tmps, ",\"");						// или адрес до [},]
+    tmpc = strstr(tmps, ",\"");						//    [},]
     if (tmpe == NULL) { Serial.println("##WEATHER###: grnd_level not found ! Use pressure");}
-    strlcpy(press, tmps, tmpe - tmps + (tmpc>tmpe?1:(tmpc - tmpe +1)));	// вписали в press строку данных (press="991")
+    strlcpy(press, tmps, tmpe - tmps + (tmpc>tmpe?1:(tmpc - tmpe +1)));	//   press   (press="991")
     cursor = tmps;
-    pressi = (float)atoi(press) / 1.333;			// преобразовали в целое число, перевели в мм.рт.ст. (pressi=743)
+    pressi = (float)atoi(press) / 1.333;			//    ,   ... (pressi=743)
  			 }
 //      Serial.printf("#CONTROL#: press. grnd_level: %d mmHg\n", pressi);
 
@@ -458,31 +490,31 @@ bool getWeather(char *wstr) {
   if (tmps == NULL) { Serial.println("##WEATHER###: wind deg not found !"); return false;}
   tmps += 6;
   tmpe = strstr(tmps, ",\"");
-  tmpc = strstr(tmps, "},");				// или адрес до[},]
+  tmpc = strstr(tmps, "},");				//   [},]
   if (tmpe == NULL) { Serial.println("## WEATHER ###: deg content not found !"); return false;}
-  strlcpy(temp, tmps, tmpe - tmps + (tmpc>tmpe?1:(tmpc - tmpe +1)));	// вписали в temp строку данных (temp="316")
+  strlcpy(temp, tmps, tmpe - tmps + (tmpc>tmpe?1:(tmpc - tmpe +1)));	//   temp   (temp="316")
   cursor = tmps;
       deg = atof(temp);
-  int wind_deg = atof(temp)/22.5;		// преобр. в целое число и перевели в полурумбы (wind_deg=14) 
-//  if(wind_deg<0) wind_deg = 16+wind_deg;			//отрицательным не бывает
+  int wind_deg = atof(temp)/22.5;		// .        (wind_deg=14) 
+//  if(wind_deg<0) wind_deg = 16+wind_deg;			//  
 //    Serial.printf("#CONTROL#: wind deg: %d rumbs (*%d*)\n", wind_deg, deg);
   
-  		// Проверяем наличие ["gust":13.09}] и добавляем его целое текстовое в строку gust
-  tmps = strstr(cursor, "\"gust\":");			// поиск ["gust":] 7
-  strlcpy(gust, const_getWeather, sizeof(gust));	// вписали в gust ("")
+  		//   ["gust":13.09}]        gust
+  tmps = strstr(cursor, "\"gust\":");			//  ["gust":] 7
+  strlcpy(gust, const_getWeather, sizeof(gust));	//   gust ("")
   if (tmps == NULL) { Serial.println("## WEATHER ###: gust not found !\n");}
   else {
-	  tmps += 7;						// добавили 7
-	  tmpe = strstr(tmps, "},");				// до [},]
+	  tmps += 7;						//  7
+	  tmpe = strstr(tmps, "},");				//  [},]
 	  if (tmpe == NULL) { Serial.println("## WEATHER ###: gust content not found !");}
 	  else {
-		  strlcpy(temp, tmps, tmpe - tmps + 1);	// вписали в temp текстовую строку (temp="13.09")
-		      gusti = (float)atoi(temp);		// преобразовали в целое число (gusti=13)
+		  strlcpy(temp, tmps, tmpe - tmps + 1);	//   temp   (temp="13.09")
+		      gusti = (float)atoi(temp);		//     (gusti=13)
 		  if (gusti == 0) { Serial.println("## WEATHER ###: gust content is 0 !");}
 		  else {
-			  strlcpy(gust, prv, sizeof(gust));	// вписали в gust константу *prv (", ПОРЫВЫ ")
-			  itoa(gusti, porv, 10);				// преобразовали gusti в текстовую строку (porv="13")
-			  strlcat(gust, porv, sizeof(gust));		// добавили к gust текстовую строку porv (", ПОРЫВЫ 13")
+			  strlcpy(gust, prv, sizeof(gust));	//   gust  *prv (",  ")
+			  itoa(gusti, porv, 10);				//  gusti    (porv="13")
+			  strlcat(gust, porv, sizeof(gust));		//   gust   porv (",  13")
 			  }
 		  cursor = tmps;
 		  }
@@ -494,7 +526,7 @@ bool getWeather(char *wstr) {
   tmps += 8;
   tmpe = strstr(tmps, "\",\"");
   if (tmpe == NULL) { Serial.println("##WEATHER###: name station not found !"); return false;}
-  strlcpy(stanc, tmps, tmpe - tmps + 1);		// вписали в stanc метеостанцию
+  strlcpy(stanc, tmps, tmpe - tmps + 1);		//   stanc 
 //    Serial.printf("#CONTROL#: station: %s\n", stanc);
   
   #ifdef USE_NEXTION

@@ -1,6 +1,11 @@
 #include "options.h"
 
 #include "player.h"
+#include "omniaplus/progress.h"
+#include "omniaplus/seek.h"
+#include "omniaplus/shuffle_fix.h"
+#include "omniaplus/usb_host.h"
+#include "omniaplus/cli_extensions.h"
 
 #include "config.h"
 #include "telnet.h"
@@ -70,6 +75,9 @@ static void syncRateToStmPins()
 
 
 void Player::init() {
+  omnia_progress_init();
+  omnia_seek_init();
+  omnia_usb_host_init();
   Serial.print("##[BOOT]#\tplayer.init\t");
   playerQueue=NULL;
   _resumeFilePos = 0;
@@ -212,6 +220,8 @@ void Player::loop() {
 
   Audio::loop();
   syncRateToStmPins();
+  omnia_progress_loop();
+  omnia_usb_host_loop();
   if(!isRunning() && _status==PLAYING) _stop(true);
   if(_volTimer){
     if((millis()-_volTicks)>1500){
@@ -316,20 +326,28 @@ void Player::browseUrl(){
 #endif
 
 void Player::prev() {
-  
   uint16_t lastStation = config.lastStation();
   if(config.getMode()==PM_WEB || !config.store.sdsnuffle){
     if (lastStation == 1) config.lastStation(config.playlistLength()); else config.lastStation(lastStation-1);
+  }else{
+    // FIX shuffle prev без пропуска
+    uint16_t prv = omnia_shuffle_prev();
+    config.lastStation(prv);
   }
   sendCommand({PR_PLAY, config.lastStation()});
 }
 
 void Player::next() {
+  // OMNIA v8.2 — shuffle fix без пропуска трека, проверка на слух + UART + WebUI
+  extern PlaylistState pls; // for check if shuffle ON? We'll use config.store.sdsnuffle as flag
   uint16_t lastStation = config.lastStation();
   if(config.getMode()==PM_WEB || !config.store.sdsnuffle){
     if (lastStation == config.playlistLength()) config.lastStation(1); else config.lastStation(lastStation+1);
   }else{
-    config.lastStation(random(1, config.playlistLength()));
+    // FIX: старый баг random(1, length) пропускал последний трек (exclusive upper bound) + мог повторять, теперь используем shuffle_fix без пропусков
+    uint16_t nxt = omnia_shuffle_next();
+    if(nxt==0) nxt=1; // fallback если shuffle вернул 0 (конец списка)
+    config.lastStation(nxt);
   }
   sendCommand({PR_PLAY, config.lastStation()});
 }

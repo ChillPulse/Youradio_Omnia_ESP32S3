@@ -1,4 +1,5 @@
 #include "commandhandler.h"
+#include "omniaplus/cli_extensions.h"
 #include "player.h"
 #include "display.h"
 #include "netserver.h"
@@ -95,6 +96,13 @@ bool CommandHandler::exec(const char *command, const char *value, uint8_t cid) {
 #endif
   if (strEquals(command, "reset"))  { config.resetSystem(value, cid); return true; }
   
+  // OMNIA v8.2 — new CLI extensions seek/shuffle/repeat/usb/status/ping
+  {
+    char combined[300];
+    if(value && strlen(value)>0) snprintf(combined, sizeof(combined), "%s %s", command, value);
+    else snprintf(combined, sizeof(combined), "%s", command);
+    if(omnia_cli_handle(combined)) return true;
+  }
   if (strEquals(command, "smartstart")){ uint8_t ss = atoi(value) == 1 ? 1 : 2; if (!player.isRunning() && ss == 1) ss = 0; config.setSmartStart(ss); return true; }
   if (strEquals(command, "audioinfo")) { config.saveValue(&config.store.audioinfo, static_cast<bool>(atoi(value))); display.putRequest(AUDIOINFO); return true; }
   if (strEquals(command, "vumeter"))   { config.saveValue(&config.store.vumeter, static_cast<bool>(atoi(value))); display.putRequest(SHOWVUMETER); return true; }
