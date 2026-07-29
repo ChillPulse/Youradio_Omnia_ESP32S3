@@ -516,7 +516,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       char sName[BUFLEN], sUrl[BUFLEN];
       int sOvol;
       uint16_t c = 1;
-      while (file.available() && c<=200) {
+      while (file.available()) {
         String line = file.readStringUntil('\n');
         line.trim();
         if(line.length()==0) continue;
@@ -526,10 +526,10 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
           printf(clientId, "#CLI.LISTNUM#: %3d: %s\n", c, line.c_str());
         }
         c++;
+        if(c % 50 == 0) { vTaskDelay(5); }
       }
       file.close();
-      if(total>200) printf(clientId, "#CLI.LISTNUM#: ... total %u\n", total);
-      printf(clientId, "##CLI.LIST#\n> ");
+      printf(clientId, "##CLI.LIST# %u tracks shown\n> ", total);
       return;
     }
     // OMNIA hook
