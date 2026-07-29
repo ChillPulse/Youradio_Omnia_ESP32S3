@@ -383,6 +383,44 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
         printf(clientId, "sleep for %d minutes after %d minutes ...\n> ", tzh, tzm);
         config.sleepForAfter(tzh, tzm);
       }else{
+    // inserted sdlist
+    if (strcmp(str, "sdlist") == 0 || strcmp(str, "list sd") == 0 || strcmp(str, "cli.sdlist") == 0) {
+      uint16_t total = config.playlistLength();
+      printf(clientId, "#CLI.LIST# SD files (%u total) from %s\n", total, PLAYLIST_SD_PATH);
+      File file = config.SDPLFS()->open(PLAYLIST_SD_PATH, "r");
+      if (!file || file.isDirectory()) {
+        file = SPIFFS.open(PLAYLIST_SD_PATH, "r");
+      }
+      if (!file || file.isDirectory()) {
+        printf(clientId, "##CLI.LIST# no SD playlist\n> ");
+        return;
+      }
+      char sName[BUFLEN], sUrl[BUFLEN];
+      int sOvol;
+      uint16_t c = 1;
+      while (file.available() && c<=200) {
+        String line = file.readStringUntil('\n');
+        line.trim();
+        if(line.length()==0) continue;
+        if (config.parseCSV(line.c_str(), sName, sUrl, sOvol)) {
+          printf(clientId, "#CLI.LISTNUM#: %3d: %s\n", c, sName);
+        } else {
+          printf(clientId, "#CLI.LISTNUM#: %3d: %s\n", c, line.c_str());
+        }
+        c++;
+      }
+      file.close();
+      if(total>200) printf(clientId, "#CLI.LISTNUM#: ... total %u\n", total);
+      printf(clientId, "##CLI.LIST#\n> ");
+      return;
+    }
+    // OMNIA hook for shuffle/repeat/seek/omnia_status
+    {
+      if(omnia_cli_handle(str)){
+        printf(clientId, "> ");
+        return;
+      }
+    }
         printf(clientId, "##CMD_ERROR#\tunknown command <%s>\n> ", str);
       }
       return;
@@ -498,43 +536,6 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
     printHeapFragmentationInfo(clientId);
     return;
   }
-    if (strcmp(str, "sdlist") == 0 || strcmp(str, "list sd") == 0 || strcmp(str, "cli.sdlist") == 0) {
-      uint16_t total = config.playlistLength();
-      printf(clientId, "#CLI.LIST# SD files (%u total) from %s\n", total, PLAYLIST_SD_PATH);
-      File file = config.SDPLFS()->open(PLAYLIST_SD_PATH, "r");
-      if (!file || file.isDirectory()) {
-        file = SPIFFS.open(PLAYLIST_SD_PATH, "r");
-      }
-      if (!file || file.isDirectory()) {
-        printf(clientId, "##CLI.LIST# no SD playlist\n> ");
-        return;
-      }
-      char sName[BUFLEN], sUrl[BUFLEN];
-      int sOvol;
-      uint16_t c = 1;
-      while (file.available() && c<=200) {
-        String line = file.readStringUntil('\n');
-        line.trim();
-        if(line.length()==0) continue;
-        if (config.parseCSV(line.c_str(), sName, sUrl, sOvol)) {
-          printf(clientId, "#CLI.LISTNUM#: %3d: %s\n", c, sName);
-        } else {
-          printf(clientId, "#CLI.LISTNUM#: %3d: %s\n", c, line.c_str());
-        }
-        c++;
-      }
-      file.close();
-      if(total>200) printf(clientId, "#CLI.LISTNUM#: ... total %u\n", total);
-      printf(clientId, "##CLI.LIST#\n> ");
-      return;
-    }
-    // OMNIA hook for shuffle/repeat/seek/omnia_status
-    {
-      if(omnia_cli_handle(str)){
-        printf(clientId, "> ");
-        return;
-      }
-    }
   if (strcmp(str, "wifi.discon") == 0 || strcmp(str, "discon") == 0 || strcmp(str, "disconnect") == 0) {
     printf(clientId, "#WIFI.DISCON#\tdisconnected...\n> ");
     WiFi.disconnect();
