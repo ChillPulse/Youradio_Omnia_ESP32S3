@@ -248,8 +248,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       printf(clientId, "new smartstart value is: %d\n> ", config.store.smartstart);
       return;
     }
-    
-    // OMNIA v8.2 RADICAL — native yoradio: 'list' always WEB stations, 'sdlist' SD real names
+        // OMNIA v8.2 RADICAL — native yoradio: 'list' always WEB stations, 'sdlist' SD real names
     if (strcmp(str, "cli.list") == 0 || strcmp(str, "list") == 0) {
       printf(clientId, "#CLI.LIST# WEB stations
 ");
