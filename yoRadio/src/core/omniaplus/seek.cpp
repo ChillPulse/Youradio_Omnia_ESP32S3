@@ -1,6 +1,5 @@
 #include "seek.h"
 #include "../player.h"
-#include "../../audioI2S/Audio.h"
 
 static bool seekingActive = false;
 static bool seekDirForward = true;
@@ -40,9 +39,6 @@ bool omnia_seek_handle(const char* cmd){
 
 void omnia_seek_absolute(uint32_t ms){
   Serial.printf("##SEEK#: absolute %lu ms\n", (unsigned long)ms);
-  // player.setAudioPlayTime(ms/1000) или setFilePos
-  // soft-mute 50-120ms до и после
-  // extern Player player; player.setOutputPins(false); delay(60); player.setAudioPlayPosition(ms/1000) etc; player.setOutputPins(true);
 }
 
 void omnia_seek_relative(int32_t deltaMs){

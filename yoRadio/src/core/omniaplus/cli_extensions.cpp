@@ -4,11 +4,10 @@
 #include "usb_host.h"
 #include "progress.h"
 #include <string.h>
+#include <Arduino.h>
 
 bool omnia_cli_handle(const char* line){
   if(!line) return false;
-  if(seek_handle(line)) return true; // seek, seek_rel, seek_percent, seek_start +/-, seek_stop — из seek.cpp (alias)
-  // На самом деле seek_handle в seek.h — omnia_seek_handle
   if(omnia_seek_handle(line)) return true;
   if(strncmp(line,"shuffle ",8)==0){
     if(strstr(line,"on")) omnia_shuffle_set(SHUFFLE_ON);
