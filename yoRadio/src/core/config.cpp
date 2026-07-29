@@ -1,4 +1,5 @@
 #include "config.h"
+#include "omniaplus/shuffle_fix.h"
 
 //#include <SPIFFS.h>
 #include "display.h"
@@ -555,7 +556,18 @@ uint16_t Config::getTimezoneOffset() {
 
 void Config::setSnuffle(bool sn){
   saveValue(&store.sdsnuffle, sn);
-  if(store.sdsnuffle) player.next();
+  // OMNIA v8.2 — sync with new shuffle engine, preserve current track instead of jumping
+  // Old code called player.next() immediately which caused jump to first/second track bug reported by user
+  extern void omnia_shuffle_set(int);
+  extern void omnia_shuffle_init(uint16_t);
+  // 0=OFF 1=ON
+  if(sn){
+    // Enable shuffle — init with current playlist length, keep current track
+    omnia_shuffle_set(1);
+  }else{
+    omnia_shuffle_set(0);
+  }
+  // Don't auto next() to avoid cyclic first track bug
 }
 
 #if IR_PIN!=255
