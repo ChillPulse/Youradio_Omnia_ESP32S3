@@ -557,15 +557,11 @@ uint16_t Config::getTimezoneOffset() {
 void Config::setSnuffle(bool sn){
   saveValue(&store.sdsnuffle, sn);
   // OMNIA v8.2 — sync with new shuffle engine, preserve current track instead of jumping
-  // Old code called player.next() immediately which caused jump to first/second track bug reported by user
-  extern void omnia_shuffle_set(int);
-  extern void omnia_shuffle_init(uint16_t);
-  // 0=OFF 1=ON
+  // Old code called player.next() immediately which caused jump to first/second track bug
   if(sn){
-    // Enable shuffle — init with current playlist length, keep current track
-    omnia_shuffle_set(1);
+    omnia_shuffle_set(SHUFFLE_ON);
   }else{
-    omnia_shuffle_set(0);
+    omnia_shuffle_set(SHUFFLE_OFF);
   }
   // Don't auto next() to avoid cyclic first track bug
 }
