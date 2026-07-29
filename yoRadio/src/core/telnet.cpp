@@ -517,8 +517,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       int sOvol;
       uint16_t c = 1;
       while (file.available() && c<=200) {
-        String line = file.readStringUntil(
-);
+        String line = file.readStringUntil('\n');
         line.trim();
         if(line.length()==0) continue;
         if (config.parseCSV(line.c_str(), sName, sUrl, sOvol)) {
