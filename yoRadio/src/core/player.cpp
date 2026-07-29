@@ -223,45 +223,12 @@ void Player::loop() {
   omnia_progress_loop();
   omnia_usb_host_loop();
   if(!isRunning() && _status==PLAYING){
-    // OMNIA v8.2 — auto next respecting shuffle + repeat combination
-    // shuffle OFF + repeat OFF = stop at end
-    // shuffle OFF + repeat ALL = loop in order
-    // shuffle OFF + repeat ONE = repeat current
-    // shuffle ON + repeat OFF = shuffle without repeat (play all shuffled once then stop)
-    // shuffle ON + repeat ALL = shuffle with repeat (reshuffle after end)
-    // shuffle ON + repeat ONE = repeat current (shuffle ignored)
-    extern RepeatMode omnia_shuffle_get_repeat();
-    RepeatMode r = omnia_shuffle_get_repeat();
-    bool isShuffle = config.store.sdsnuffle;
-    if(r==REPEAT_ONE){
-      // repeat current
-      sendCommand({PR_PLAY, config.lastStation()});
-    }else if(r==REPEAT_ALL){
-      // next (will handle shuffle if ON)
-      uint16_t nxt = isShuffle ? omnia_shuffle_next() : (config.lastStation() % config.playlistLength() + 1);
-      if(nxt==0) nxt=1;
-      config.setLastStation(nxt);
-      sendCommand({PR_PLAY, nxt});
-    }else{ // REPEAT_OFF
-      if(isShuffle){
-        uint16_t nxt = omnia_shuffle_next();
-        if(nxt!=0){
-          config.setLastStation(nxt);
-          sendCommand({PR_PLAY, nxt});
-        }else{
-          _stop(true); // end of shuffled list
-        }
-      }else{
-        // shuffle OFF + repeat OFF: if not at end, play next, else stop
-        if(config.lastStation() < config.playlistLength()){
-          uint16_t nxt = config.lastStation()+1;
-          config.setLastStation(nxt);
-          sendCommand({PR_PLAY, nxt});
-        }else{
-          _stop(true);
-        }
-      }
-    }
+    // OMNIA v8.2 — auto-next is now handled in audio_eof_mp3 (which respects shuffle+repeat)
+    // Here we just ensure we don't double-trigger, just stop if not already handled
+    // The audio_eof_mp3 callback already sent PR_PLAY for next track, so just _stop if no next was sent
+    // To avoid double, we just call _stop(true) and let audio_eof_mp3 handle next via its own PR_PLAY
+    // Actually audio_eof_mp3 is called from Audio lib on EOF, which already does next/stop, so here we just _stop to clear state
+    _stop(true);
     return;
   }
   if(_volTimer){

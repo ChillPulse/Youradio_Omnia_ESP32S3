@@ -16,8 +16,8 @@ void omnia_shuffle_init(uint16_t total){
   pls.currentIdx = config.lastStation();
   if(pls.currentIdx==0) pls.currentIdx=1;
   if(pls.currentIdx>total) pls.currentIdx=total;
-  pls.repeat = REPEAT_ALL;
-  pls.shuffle = pls.shuffle; // keep
+  // keep repeat mode
+  if(!pls_initialized) pls.repeat = REPEAT_OFF; // default OFF for flagship: stop at end unless user sets ALL
   pls.shuffledPos = 0;
   pls.shuffledOrder = (uint16_t*)malloc(total*sizeof(uint16_t));
   if(!pls.shuffledOrder){
@@ -35,7 +35,6 @@ void omnia_shuffle_set(ShuffleMode s){
   }
   pls.shuffle = s;
   if(s==SHUFFLE_ON && pls.shuffledOrder){
-    // Fisher-Yates
     for(uint16_t i=pls.total-1;i>0;i--){
       uint16_t j = random(i+1);
       uint16_t tmp = pls.shuffledOrder[i];
@@ -43,7 +42,6 @@ void omnia_shuffle_set(ShuffleMode s){
       pls.shuffledOrder[j]=tmp;
     }
     pls.shuffledPos=0;
-    // Preserve current track as first to avoid jump to first track bug
     if(pls.currentIdx>0 && pls.currentIdx<=pls.total){
       for(uint16_t i=0;i<pls.total;i++){
         if(pls.shuffledOrder[i]==pls.currentIdx){
@@ -53,14 +51,23 @@ void omnia_shuffle_set(ShuffleMode s){
           break;
         }
       }
-      pls.shuffledPos=1; // next will be second
+      pls.shuffledPos=1;
     }
   }
 }
 
 void omnia_shuffle_set_repeat(RepeatMode r){ pls.repeat=r; }
 RepeatMode omnia_shuffle_get_repeat(){ return pls.repeat; }
+ShuffleMode omnia_shuffle_get_shuffle(){ return pls.shuffle; }
 PlaylistState* omnia_shuffle_get_state(){ return &pls; }
+
+bool omnia_shuffle_is_last(){
+  if(pls.shuffle==SHUFFLE_OFF){
+    return pls.currentIdx >= pls.total;
+  }else{
+    return pls.shuffledPos >= pls.total;
+  }
+}
 
 uint16_t omnia_shuffle_next(){
   uint16_t curTotal = config.playlistLength();
@@ -68,15 +75,16 @@ uint16_t omnia_shuffle_next(){
   if(!pls_initialized || !pls.shuffledOrder || curTotal != pls.total){
     omnia_shuffle_init(curTotal);
   }
-  if(pls.total==0 || !pls.shuffledOrder) return config.lastStation();
+  if(pls.total==0 || !pls.shuffledOrder) return 0; // 0 means stop
   if(pls.shuffle==SHUFFLE_OFF){
-    uint16_t next = pls.currentIdx + 1;
-    if(next > pls.total){
-      if(pls.repeat==REPEAT_ALL) next=1;
-      else if(pls.repeat==REPEAT_ONE) next=pls.currentIdx;
-      else next=0;
+    if(pls.currentIdx < pls.total){
+      return pls.currentIdx+1;
+    }else{
+      // at end
+      if(pls.repeat==REPEAT_ALL) return 1;
+      if(pls.repeat==REPEAT_ONE) return pls.currentIdx;
+      return 0; // REPEAT_OFF -> stop
     }
-    return next;
   }else{
     if(pls.shuffledPos < pls.total){
       return pls.shuffledOrder[pls.shuffledPos++];
@@ -84,10 +92,10 @@ uint16_t omnia_shuffle_next(){
       if(pls.repeat==REPEAT_ALL){
         omnia_shuffle_set(SHUFFLE_ON);
         if(pls.shuffledPos < pls.total) return pls.shuffledOrder[pls.shuffledPos++];
-        else return pls.currentIdx;
+        else return 0;
       }
       if(pls.repeat==REPEAT_ONE) return pls.currentIdx;
-      return 0;
+      return 0; // REPEAT_OFF -> stop after shuffled all
     }
   }
 }
@@ -98,17 +106,20 @@ uint16_t omnia_shuffle_prev(){
   if(!pls_initialized || !pls.shuffledOrder || curTotal != pls.total){
     omnia_shuffle_init(curTotal);
   }
-  if(pls.total==0 || !pls.shuffledOrder) return config.lastStation();
+  if(pls.total==0 || !pls.shuffledOrder) return pls.currentIdx;
   if(pls.shuffle==SHUFFLE_OFF){
     if(pls.currentIdx > 1) return pls.currentIdx-1;
     if(pls.repeat==REPEAT_ALL) return pls.total;
     return pls.currentIdx;
   }else{
+    // In shuffle mode, flagship behavior: PREV goes to previous in shuffled order (history), not random new
+    // This allows going back
     if(pls.shuffledPos>1){
       pls.shuffledPos-=2;
-      return pls.shuffledOrder[pls.shuffledPos++];
+      uint16_t prev = pls.shuffledOrder[pls.shuffledPos++];
+      return prev;
     }
-    return pls.currentIdx;
+    return pls.currentIdx; // at start of shuffled list
   }
 }
 

@@ -156,8 +156,52 @@ void audio_id3data(const char *info){  //id3 metadata
     telnet.printf("##AUDIO.ID3#: %s\n", info);
 }
 
-void audio_eof_mp3(const char *info){  //end of file
+void audio_eof_mp3(const char *info){  //end of file — OMNIA v8.2 fix repeat/shuffle logic
     config.sdResumePos = 0;
+    // Respect repeat/shuffle modes for SD
+    if(config.getMode()==PM_SDCARD){
+        extern RepeatMode omnia_shuffle_get_repeat();
+        extern ShuffleMode omnia_shuffle_get_shuffle();
+        extern uint16_t omnia_shuffle_next();
+        RepeatMode r = omnia_shuffle_get_repeat();
+        ShuffleMode s = omnia_shuffle_get_shuffle();
+        if(r==REPEAT_ONE){
+            // repeat current track
+            player.sendCommand({PR_PLAY, config.lastStation()});
+            return;
+        }
+        // For OFF and ALL, use shuffle_next logic which returns 0 if should stop
+        if(s==SHUFFLE_ON){
+            uint16_t nxt = omnia_shuffle_next();
+            if(nxt==0){
+                // stop at end if repeat OFF
+                player.sendCommand({PR_STOP, 0});
+            }else{
+                config.setLastStation(nxt);
+                player.sendCommand({PR_PLAY, nxt});
+            }
+            return;
+        }else{
+            // shuffle OFF
+            if(r==REPEAT_OFF){
+                if(config.lastStation() < config.playlistLength()){
+                    uint16_t nxt = config.lastStation()+1;
+                    config.setLastStation(nxt);
+                    player.sendCommand({PR_PLAY, nxt});
+                }else{
+                    player.sendCommand({PR_STOP, 0}); // stop after last
+                }
+            }else if(r==REPEAT_ALL){
+                uint16_t nxt = config.lastStation() % config.playlistLength() + 1;
+                config.setLastStation(nxt);
+                player.sendCommand({PR_PLAY, nxt});
+            }else{ // REPEAT_ONE already handled
+                player.sendCommand({PR_PLAY, config.lastStation()});
+            }
+            return;
+        }
+    }
+    // For WEB mode, original behavior
     player.next();
 }
 
