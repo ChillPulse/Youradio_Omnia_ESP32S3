@@ -256,7 +256,7 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
         // For simplicity, list from config playlist if SD mode uses same parser? 
         // Attempt to list SD root
         #ifdef USE_SD
-        extern SDManager sdman;
+        // extern SDManager sdman; // removed to fix compile, SDManager type not in scope here, using config.playlistLength() instead
         // If sdman has index, print from it; fallback to SPIFFS
         #endif
         // Try to print SD playlist length as tracks
