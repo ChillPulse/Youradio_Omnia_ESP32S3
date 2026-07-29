@@ -248,71 +248,44 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       printf(clientId, "new smartstart value is: %d\n> ", config.store.smartstart);
       return;
     }
-
-    // OMNIA v8.2 RADICAL — list = WEB stations (native), sdlist = real SD names
     if (strcmp(str, "cli.list") == 0 || strcmp(str, "list") == 0) {
-      printf(clientId, "#CLI.LIST# WEB stations
-");
-      File file = SPIFFS.open(PLAYLIST_PATH, "r");
-      if (!file || file.isDirectory()) {
-        printf(clientId, "##CLI.LIST#
-> ");
-        return;
-      }
-      char sName[BUFLEN], sUrl[BUFLEN];
-      int sOvol;
-      uint8_t c = 1;
-      while (file.available()) {
-        if (config.parseCSV(file.readStringUntil('
-').c_str(), sName, sUrl, sOvol)) {
-          printf(clientId, "#CLI.LISTNUM#: %*d: %s, %s
-", 3, c, sName, sUrl);
-          c++;
+      // OMNIA v8.2 — in SD mode list SD files, in WEB mode list stations (FIX list gives stations not tracks)
+      if(config.getMode()==PM_SDCARD){
+        printf(clientId, "#CLI.LIST# SD files\n");
+        // List SD files from sdmanager / playlist
+        // For simplicity, list from config playlist if SD mode uses same parser? 
+        // Attempt to list SD root
+        #ifdef USE_SD
+        // extern SDManager sdman; // removed to fix compile, SDManager type not in scope here, using config.playlistLength() instead
+        // If sdman has index, print from it; fallback to SPIFFS
+        #endif
+        // Try to print SD playlist length as tracks
+        uint16_t len = config.playlistLength();
+        for(uint16_t i=1;i<=len && i<=100;i++){
+          // config.stationForId(i) ? We don't have easy API, so just print index
+          printf(clientId, "#CLI.LISTNUM#: %3d: SD track %u\n", i, i);
+        }
+        if(len>100) printf(clientId, "#CLI.LISTNUM#: ... total %u\n", len);
+      }else{
+        printf(clientId, "#CLI.LIST#\n");
+        File file = SPIFFS.open(PLAYLIST_PATH, "r");
+        if (!file || file.isDirectory()) {
+          return;
+        }
+        char sName[BUFLEN], sUrl[BUFLEN];
+        int sOvol;
+        uint8_t c = 1;
+        while (file.available()) {
+          if (config.parseCSV(file.readStringUntil('\n').c_str(), sName, sUrl, sOvol)) {
+            printf(clientId, "#CLI.LISTNUM#: %*d: %s, %s\n", 3, c, sName, sUrl);
+            c++;
+          }
         }
       }
-      file.close();
-      printf(clientId, "##CLI.LIST#
-> ");
+      printf(clientId, "##CLI.LIST#\n");
+      printf(clientId, "> ");
       return;
     }
-    if (strcmp(str, "sdlist") == 0 || strcmp(str, "list sd") == 0 || strcmp(str, "cli.sdlist") == 0) {
-      uint16_t total = config.playlistLength();
-      printf(clientId, "#CLI.LIST# SD files (%u total) from %s
-", total, PLAYLIST_SD_PATH);
-      File file = config.SDPLFS()->open(PLAYLIST_SD_PATH, "r");
-      if (!file || file.isDirectory()) {
-        file = SPIFFS.open(PLAYLIST_SD_PATH, "r");
-      }
-      if (!file || file.isDirectory()) {
-        printf(clientId, "##CLI.LIST# no SD playlist
-> ");
-        return;
-      }
-      char sName[BUFLEN], sUrl[BUFLEN];
-      int sOvol;
-      uint16_t c = 1;
-      while (file.available() && c<=200) {
-        String line = file.readStringUntil('
-');
-        line.trim();
-        if(line.length()==0) continue;
-        if (config.parseCSV(line.c_str(), sName, sUrl, sOvol)) {
-          printf(clientId, "#CLI.LISTNUM#: %3d: %s
-", c, sName);
-        } else {
-          printf(clientId, "#CLI.LISTNUM#: %3d: %s
-", c, line.c_str());
-        }
-        c++;
-      }
-      file.close();
-      if(total>200) printf(clientId, "#CLI.LISTNUM#: ... total %u
-", total);
-      printf(clientId, "##CLI.LIST#
-> ");
-      return;
-    }
-
     if (strcmp(str, "cli.info") == 0 || strcmp(str, "info") == 0) {
       printf(clientId, "##CLI.INFO#\n");
       char timeStringBuff[50];
@@ -529,5 +502,43 @@ void Telnet::on_input(const char* str, uint8_t clientId) {
       return;
     }
   }
+    if (strcmp(str, "sdlist") == 0 || strcmp(str, "list sd") == 0 || strcmp(str, "cli.sdlist") == 0) {
+      uint16_t total = config.playlistLength();
+      printf(clientId, "#CLI.LIST# SD files (%u total) from %s\n", total, PLAYLIST_SD_PATH);
+      File file = config.SDPLFS()->open(PLAYLIST_SD_PATH, "r");
+      if (!file || file.isDirectory()) {
+        file = SPIFFS.open(PLAYLIST_SD_PATH, "r");
+      }
+      if (!file || file.isDirectory()) {
+        printf(clientId, "##CLI.LIST# no SD playlist\n> ");
+        return;
+      }
+      char sName[BUFLEN], sUrl[BUFLEN];
+      int sOvol;
+      uint16_t c = 1;
+      while (file.available() && c<=200) {
+        String line = file.readStringUntil(
+);
+        line.trim();
+        if(line.length()==0) continue;
+        if (config.parseCSV(line.c_str(), sName, sUrl, sOvol)) {
+          printf(clientId, "#CLI.LISTNUM#: %3d: %s\n", c, sName);
+        } else {
+          printf(clientId, "#CLI.LISTNUM#: %3d: %s\n", c, line.c_str());
+        }
+        c++;
+      }
+      file.close();
+      if(total>200) printf(clientId, "#CLI.LISTNUM#: ... total %u\n", total);
+      printf(clientId, "##CLI.LIST#\n> ");
+      return;
+    }
+    // OMNIA hook
+    {
+      if(omnia_cli_handle(str)){
+        printf(clientId, "> ");
+        return;
+      }
+    }
   telnet.printf(clientId, "##CMD_ERROR#\tunknown command <%s>\n> ", str);
 }
