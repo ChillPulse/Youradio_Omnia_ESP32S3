@@ -981,13 +981,13 @@ bool Audio::connecttoFS(fs::FS& fs, const char* path, int32_t fileStartPos) {
     setDefaults(); // free buffers an set defaults
 
     if(c_path.ends_with_icase(".mp3")) { codec = CODEC_MP3; AUDIO_INFO("format is mp3"); }
-//    if(c_path.ends_with_icase(".m4a")) { codec = CODEC_M4A; AUDIO_INFO("format is aac"); }
-//    if(c_path.ends_with_icase(".aac")) { codec = CODEC_AAC; AUDIO_INFO("format is aac"); }
-//    if(c_path.ends_with_icase(".wav")) { codec = CODEC_WAV; AUDIO_INFO("format is wav"); }
+    if(c_path.ends_with_icase(".m4a")) { codec = CODEC_M4A; AUDIO_INFO("format is aac"); }
+    if(c_path.ends_with_icase(".aac")) { codec = CODEC_AAC; AUDIO_INFO("format is aac"); }
+    if(c_path.ends_with_icase(".wav")) { codec = CODEC_WAV; AUDIO_INFO("format is wav"); }
     if(c_path.ends_with_icase(".flac")) { codec = CODEC_FLAC; AUDIO_INFO("format is flac"); }
-//    if(c_path.ends_with_icase(".opus")) { codec = CODEC_OPUS; m_f_ogg = true; AUDIO_INFO("format is opus"); }
-//    if(c_path.ends_with_icase(".ogg")) { codec = CODEC_OGG; m_f_ogg = true; AUDIO_INFO("format is ogg"); }
-//    if(c_path.ends_with_icase(".oga")) { codec = CODEC_OGG; m_f_ogg = true; AUDIO_INFO("format is ogg"); }
+    if(c_path.ends_with_icase(".opus")) { codec = CODEC_OPUS; m_f_ogg = true; AUDIO_INFO("format is opus"); }
+    if(c_path.ends_with_icase(".ogg")) { codec = CODEC_OGG; m_f_ogg = true; AUDIO_INFO("format is ogg"); }
+    if(c_path.ends_with_icase(".oga")) { codec = CODEC_OGG; m_f_ogg = true; AUDIO_INFO("format is ogg"); }
     if(codec == CODEC_NONE) {   // guard
         int dotPos = c_path.last_index_of('.');
         /*AUDIO_LOG_WARN*/AUDIO_ERROR("The %s format is not supported", path + dotPos); goto exit;
