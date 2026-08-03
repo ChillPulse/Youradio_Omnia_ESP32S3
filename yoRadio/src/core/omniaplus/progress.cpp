@@ -30,62 +30,49 @@ void omnia_usb_status_send(const char* state, const char* fs, uint64_t size, int
 
 void omnia_progress_loop(){
   uint32_t now = millis();
-  if(now - lastProgressMs < 400) return; // 2.5Hz max to avoid spam
+  if(now - lastProgressMs < 400) return;
   lastProgressMs = now;
   if(!player.isRunning()) return;
   if(config.getMode()!=1) return;
 
-  uint32_t curSec = player.getAudioCurrentTime();
-  uint32_t durSec = player.getAudioFileDuration();
   uint32_t filePos = player.getFilePos();
   uint32_t fileSize = player.getFileSize();
+  uint32_t bitrate = player.getBitRate(); // bits per second, may be 0 early
+  uint32_t durSec = player.getAudioFileDuration();
+  uint32_t curSec = player.getAudioCurrentTime();
 
-  // Get bitrate from audio info if available, otherwise estimate
-  // For MP3, bitrate can be obtained from config or from file header, but we approximate
-  uint32_t bitrate = 0;
-  // Try to get from last known bitrate via station info? For SD, we have no direct API, use 128k fallback if needed
-  // We can use fileSize and durSec to estimate if durSec>0: bitrate = fileSize*8/durSec
+  uint32_t curMs = 0;
+  uint32_t durMs = 0;
+  uint16_t percentX10 = 0;
 
-  uint32_t curMs = curSec*1000UL;
-  uint32_t durMs = durSec*1000UL;
-
-  // If durMs is 0 but fileSize known, estimate dur from fileSize and bitrate
-  // For MP3 with ID3, fileSize includes ID3, but close enough
-  if(durMs==0 && fileSize>0){
-    // Try to estimate bitrate from filePos/curSec if curSec>0
-    if(curSec>0 && filePos>0){
-      bitrate = (uint64_t)filePos*8 / curSec;
-    }
-    // If still 0, try to use fileSize and assume average bitrate from file header if available?
-    // Fallback to 160k for MP3, 900k for FLAC, 1411k for WAV estimation
-    // For now, if bitrate still 0, estimate dur from fileSize assuming 192k MP3 average
-    if(bitrate==0){
-      // Guess based on file extension? For MP3 assume 192k, for FLAC assume 800k, for WAV 1411k
-      // We don't have extension here, so use 192k as generic for MP3
-      bitrate = 192000;
-    }
-    if(bitrate>0){
-      durMs = (uint64_t)fileSize*8*1000 / bitrate;
-    }
+  // Duration from file header if available
+  if(durSec>0){
+    durMs = durSec*1000UL;
+  }else if(fileSize>0 && bitrate>0){
+    durMs = (uint64_t)fileSize*8*1000 / bitrate;
+  }else if(fileSize>0){
+    // Fallback 192k for MP3
+    durMs = (uint64_t)fileSize*8*1000 / 192000;
   }
 
-  // Percent from filePos/fileSize if available (more stable than time for MP3 VBR)
-  uint16_t percentX10 = 0;
+  // Percent from file position (most stable for all formats)
   if(fileSize>0 && filePos>0){
     percentX10 = (uint64_t)filePos*1000 / fileSize;
-    // If curMs is 0 but we have percent and dur, estimate curMs
-    if(curMs==0 && durMs>0){
+    // curMs from percent * dur
+    if(durMs>0){
       curMs = (uint64_t)percentX10 * durMs / 1000;
+    }else if(bitrate>0){
+      curMs = (uint64_t)filePos*8*1000 / bitrate;
+    }else{
+      curMs = filePos*1000 / 100; // dummy
     }
-    // If durMs still 0 but curMs>0 and percent>0, estimate durMs
-    if(durMs==0 && curMs>0 && percentX10>0){
-      durMs = (uint64_t)curMs * 1000 / percentX10;
-    }
-  }else if(durMs>0 && curMs>0){
-    percentX10 = (uint64_t)curMs*1000 / durMs;
+  }else if(curSec>0){
+    curMs = curSec*1000UL;
+    if(durMs>0) percentX10 = (uint64_t)curMs*1000 / durMs;
   }
 
   if(percentX10>1000) percentX10=1000;
+  if(durMs>0 && curMs>durMs) curMs=durMs;
 
   uint16_t idx = config.lastStation();
   uint16_t total = config.playlistLength();
