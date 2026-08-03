@@ -92,7 +92,7 @@ void SDManager::listSD(File &plSDfile, File &plSDindex, const char* dirname, uin
                 listSD(plSDfile, plSDindex, filePath, levels - 1);
             }
         } else {
-            if (_endsWith(strlwr((char*)fn), ".mp3") || _endsWith(fn, ".m4a") || _endsWith(fn, ".aac") ||
+            if (_endsWith(strlwr((char*)fn), ".mp3") || _endsWith(fn, ".m4a") || _endsWith(fn, ".aac") || _endsWith(fn, ".wav") || _endsWith(fn, ".ogg") || _endsWith(fn, ".opus") || _endsWith(fn, ".oga") ||
                 _endsWith(fn, ".wav") || _endsWith(fn, ".flac")) {
                 pos = plSDfile.position();
                 plSDfile.printf("%s\t%s\t0\n", fn, filePath);
