@@ -985,9 +985,9 @@ bool Audio::connecttoFS(fs::FS& fs, const char* path, int32_t fileStartPos) {
     if(c_path.ends_with_icase(".aac")) { codec = CODEC_AAC; AUDIO_INFO("format is aac"); }
     if(c_path.ends_with_icase(".wav")) { codec = CODEC_WAV; AUDIO_INFO("format is wav"); }
     if(c_path.ends_with_icase(".flac")) { codec = CODEC_FLAC; AUDIO_INFO("format is flac"); }
-    if(c_path.ends_with_icase(".opus")) { codec = CODEC_OPUS; m_f_ogg = true; AUDIO_INFO("format is opus"); }
-    if(c_path.ends_with_icase(".ogg")) { codec = CODEC_OGG; m_f_ogg = true; AUDIO_INFO("format is ogg"); }
-    if(c_path.ends_with_icase(".oga")) { codec = CODEC_OGG; m_f_ogg = true; AUDIO_INFO("format is ogg"); }
+//    if(c_path.ends_with_icase(".opus")) { codec = CODEC_OPUS; m_f_ogg = true; AUDIO_INFO("format is opus"); } // disabled for flagship stability, enable only if heap >100k
+//    if(c_path.ends_with_icase(".ogg")) { codec = CODEC_OGG; m_f_ogg = true; AUDIO_INFO("format is ogg"); } // disabled
+//    if(c_path.ends_with_icase(".oga")) { codec = CODEC_OGG; m_f_ogg = true; AUDIO_INFO("format is ogg"); } // disabled
     if(codec == CODEC_NONE) {   // guard
         int dotPos = c_path.last_index_of('.');
         /*AUDIO_LOG_WARN*/AUDIO_ERROR("The %s format is not supported", path + dotPos); goto exit;
