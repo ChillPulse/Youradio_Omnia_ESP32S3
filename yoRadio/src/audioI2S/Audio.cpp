@@ -2439,9 +2439,15 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
 
         if(atom_name.equals("mdat")){
             if(!m_m4aHdr.progressive){
-//                /*AUDIO_LOG_DEBUG*/AUDIO_INFO("non progressive file can't be played yet"); // mdat before moov, todo: skip mdat
-                stopSong();
-                return -1;
+                // OMNIA FIX: non-progressive M4A (mdat before moov) — for SD, save and skip mdat instead of stopping
+                // Original did stopSong() which caused silent fail for skysea and Зелёный храм
+                AUDIO_INFO("non-progressive M4A: mdat before moov, size %u, skipping for SD", (uint32_t)atom_size.to_uint32(16));
+                uint32_t sz = atom_size.to_uint32(16);
+                if(sz==0) sz = 0;
+                m_m4aHdr.retvalue += sz;
+                m_m4aHdr.headerSize += sz;
+                // Continue searching for moov instead of stopping
+                return 0;
             }
 //            /*AUDIO_LOG_DEBUG*/AUDIO_INFO("atom %s @ %i, size: %i, ends @ %i", atom_name.c_get(), m_m4aHdr.headerSize, atom_size.to_uint32(16), m_m4aHdr.headerSize + atom_size.to_uint32(16));
             m_m4aHdr.sizeof_mdat = atom_size.to_uint32(16) - 8;
