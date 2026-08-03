@@ -2394,17 +2394,28 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
         }
     }
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == M4A_FTYP) { /* check_m4a_file */
-
+    if(m_controlCounter == M4A_FTYP) { /* check_m4a_file — OMNIA fix: allow dash and remove strict brand check */
+        // Original checked only M4A / isom / mp42 at offset 8, but dash is common for YouTube and should be allowed
+        // For flagship, we remove strict brand check — if ftyp exists, we try to parse further regardless of brand
+        // Minimal: allow dash, or better allow any brand
         int m4a  = specialIndexOf(data, "M4A ", 20);
         int isom = specialIndexOf(data, "isom", 20);
         int mp42 = specialIndexOf(data, "mp42", 20);
+        int dash = specialIndexOf(data, "dash", 20);
 
-        if((m4a != 8) && (isom != 8) && (mp42 != 8)) {
-            AUDIO_ERROR("subtype 'MA4 ', 'isom' or 'mp42' expected, but found '%s '", (data + 8));
-            stopSong();
-            return -1;
+        // If none of known brands found, still allow to continue (don't stop) — let parser try
+        if((m4a != 8) && (isom != 8) && (mp42 != 8) && (dash != 8)) {
+            // Instead of stopping, just log and continue — for dash and other brands
+            AUDIO_INFO("ftyp brand not M4A/isom/mp42/dash, found '%s', but continuing", (data + 8));
+            // Don't stop, try to continue parsing
         }
+
+        // If dash found, allow
+        // if((m4a != 8) && (isom != 8) && (mp42 != 8) && (dash != 8)) {
+        //     AUDIO_ERROR("subtype 'MA4 ', 'isom' or 'mp42' expected, but found '%s '", (data + 8));
+        //     stopSong();
+        //     return -1;
+        // }
 
         m_m4aHdr.retvalue += m_m4aHdr.sizeof_ftyp;
         m_m4aHdr.headerSize += m_m4aHdr.sizeof_ftyp;
@@ -3867,7 +3878,10 @@ void Audio::processLocalFile() {
             }
             if(m_controlCounter == 100){
                 if(m_audioDataStart > 0){ m_prlf.audioHeaderFound = true; }
-                if(!m_audioDataSize) m_audioDataSize = m_audioFileSize;
+                if(!m_audioDataSize) {
+            if(m_audioFileSize > m_audioDataStart) m_audioDataSize = m_audioFileSize - m_audioDataStart;
+            else m_audioDataSize = m_audioFileSize;
+        }
             }
             return;
         }
@@ -4051,7 +4065,10 @@ void Audio::processWebFile() {
             }
             if(m_controlCounter == 100){
                 if(m_audioDataStart > 0){ m_pwf.audioHeaderFound = true; }
-                if(!m_audioDataSize) m_audioDataSize = m_audioFileSize;
+                if(!m_audioDataSize) {
+            if(m_audioFileSize > m_audioDataStart) m_audioDataSize = m_audioFileSize - m_audioDataStart;
+            else m_audioDataSize = m_audioFileSize;
+        }
             }
             return;
         }
@@ -5514,6 +5531,11 @@ void Audio::calculateAudioTime(uint16_t bytesDecoderIn, uint16_t bytesDecoderOut
 
         if(m_cat.nominalBitRate){
             audioCurrentTime = (uint32_t)(m_cat.sumBytesIn * 8 / m_cat.nominalBitRate);
+
+            // FIX from Chat recommendation 2: if duration still 0 and audioDataSize known, calculate it
+            if(m_audioFileDuration == 0 && m_audioDataSize > 0){
+                m_audioFileDuration = (uint32_t)round(((double)m_audioDataSize * 8) / (double)m_cat.nominalBitRate);
+            }
         }
         else{
             double instBitRate = (m_cat.deltaBytesIn * 8000.0) / delta_t;
