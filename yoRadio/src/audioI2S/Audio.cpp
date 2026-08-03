@@ -5665,8 +5665,21 @@ bool Audio::setFilePos(uint32_t pos){
     if(!m_f_stream) return false;
     if((m_dataMode != AUDIO_LOCALFILE) && (m_streamType != ST_WEBFILE)){AUDIO_ERROR("audio is not a file"); return false;}
     if((m_streamType == ST_WEBFILE) && (!m_f_acceptRanges)){AUDIO_ERROR("server does not accept ranges"); return false;}
-    if(pos > m_audioDataStart + m_audioDataSize) {AUDIO_ERROR("given position is too large"); return false;}
-    if(pos < m_audioDataStart) {AUDIO_INFO("set audiodatastart at %lu", m_audioDataStart); m_resumeFilePos = m_audioDataStart;}
+
+    // OMNIA FIX from Chat recommendation 3: clamp position instead of error for AAC seek
+    // If size unknown, restore from file size
+    if(m_audioDataSize == 0 && m_audioFileSize > m_audioDataStart){
+        m_audioDataSize = m_audioFileSize - m_audioDataStart;
+    }
+
+    uint32_t endPos = m_audioDataStart + m_audioDataSize;
+    if(endPos > 0 && pos >= endPos){
+        pos = endPos - 1; // clamp to last byte
+    }
+    if(pos < m_audioDataStart){
+        pos = m_audioDataStart;
+    }
+
     m_resumeFilePos = pos;
     return true;
 }
