@@ -30,45 +30,34 @@ void omnia_usb_status_send(const char* state, const char* fs, uint64_t size, int
 
 void omnia_progress_loop(){
   uint32_t now = millis();
-  if(now - lastProgressMs < 400) return;
+  if(now - lastProgressMs < 300) return; // ~3Hz, avoid spam
   lastProgressMs = now;
   if(!player.isRunning()) return;
-  if(config.getMode()!=1) return;
+  // Fix as per chat recommendation: don't hardcode !=1, allow SD and USB (and future)
+  // PM_WEB =0, PM_SDCARD=1
+  if(config.getMode()==0) return; // was !=1, now only skip WEB
 
   uint32_t filePos = player.getFilePos();
   uint32_t fileSize = player.getFileSize();
-  uint32_t bitrate = player.getBitRate(); // bits per second, may be 0 early
+  uint32_t bitrate = player.getBitRate();
   uint32_t durSec = player.getAudioFileDuration();
   uint32_t curSec = player.getAudioCurrentTime();
 
-  uint32_t curMs = 0;
-  uint32_t durMs = 0;
-  uint16_t percentX10 = 0;
+  uint32_t curMs = curSec*1000UL;
+  uint32_t durMs = durSec*1000UL;
 
-  // Duration from file header if available
-  if(durSec>0){
-    durMs = durSec*1000UL;
-  }else if(fileSize>0 && bitrate>0){
+  if(durMs==0 && fileSize>0 && bitrate>0){
     durMs = (uint64_t)fileSize*8*1000 / bitrate;
-  }else if(fileSize>0){
-    // Fallback 192k for MP3
-    durMs = (uint64_t)fileSize*8*1000 / 192000;
   }
 
-  // Percent from file position (most stable for all formats)
+  uint16_t percentX10 = 0;
   if(fileSize>0 && filePos>0){
     percentX10 = (uint64_t)filePos*1000 / fileSize;
-    // curMs from percent * dur
-    if(durMs>0){
+    if(durMs>0 && curMs==0){
       curMs = (uint64_t)percentX10 * durMs / 1000;
-    }else if(bitrate>0){
-      curMs = (uint64_t)filePos*8*1000 / bitrate;
-    }else{
-      curMs = filePos*1000 / 100; // dummy
     }
-  }else if(curSec>0){
-    curMs = curSec*1000UL;
-    if(durMs>0) percentX10 = (uint64_t)curMs*1000 / durMs;
+  }else if(durMs>0 && curMs>0){
+    percentX10 = (uint64_t)curMs*1000 / durMs;
   }
 
   if(percentX10>1000) percentX10=1000;
@@ -85,7 +74,6 @@ void omnia_progress_loop(){
   p.fileIdx = idx;
   p.fileTotal = total;
 
-  if(percentX10>0 || curMs>0){
-    omnia_progress_send(p);
-  }
+  // Fix as per chat: always send, even if 0/0, so UI doesn't think no progress
+  omnia_progress_send(p);
 }

@@ -2361,18 +2361,33 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
         }
     }
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == M4A_BEGIN) { // init
+    if(m_controlCounter == M4A_BEGIN) { // init — OMNIA v8.2 Variant C: allow atoms before ftyp + Variant B: fallback to AAC if no ftyp but looks like ADTS
         memset(&m_m4aHdr, 0, sizeof(audiolib::m4aHdr_t));
 
         atom_size.big_endian(data, 4);
         atom_name.copy_from((const char*)data + 4, 4);
 
         if(atom_name.equals("ftyp")){
-//            AUDIO_LOG_DEBUG("atom %s @ %zu, size: %u, ends @ %zu", atom_name.c_get(),  m_m4aHdr.headerSize, (uint32_t)atom_size.to_uint32(16),  m_m4aHdr.headerSize + (size_t)atom_size.to_uint32(16));
             m_m4aHdr.sizeof_ftyp = atom_size.to_uint32(16);
             m_controlCounter = M4A_FTYP;
         }
+        else if(atom_name.equals("free") || atom_name.equals("skip") || atom_name.equals("wide")){
+            // Variant C: skip free/skip/wide atoms before ftyp
+            uint32_t sz = atom_size.to_uint32(16);
+            if(sz==0) sz = len; // safety
+            m_m4aHdr.retvalue += sz;
+            m_m4aHdr.headerSize += sz;
+            return 0;
+        }
         else{
+            // Variant B: if no ftyp but looks like raw AAC ADTS (0xFF F1 / 0xFF F9), switch to CODEC_AAC
+            if(len>=2 && data[0]==0xFF && (data[1] & 0xF6)==0xF0){
+                AUDIO_INFO("m4a: no ftyp, looks like raw AAC (ADTS). Switch to CODEC_AAC");
+                m_codec = CODEC_AAC;
+                m_audioDataSize = m_audioFileSize;
+                m_controlCounter = 100;
+                return 0;
+            }
             AUDIO_ERROR("begin: ftyp not found");
             stopSong();
             return -1;
