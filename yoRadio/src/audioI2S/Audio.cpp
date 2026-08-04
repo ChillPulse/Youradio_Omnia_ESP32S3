@@ -2439,14 +2439,18 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
 
         if(atom_name.equals("mdat")){
             if(!m_m4aHdr.progressive){
-                // OMNIA FIX: non-progressive M4A (mdat before moov) — for SD, save and skip mdat instead of stopping
-                // Original did stopSong() which caused silent fail for skysea and Зелёный храм
-                AUDIO_INFO("non-progressive M4A: mdat before moov, size %u, skipping for SD", (uint32_t)atom_size.to_uint32(16));
+                // OMNIA FIX: non-progressive M4A (mdat before moov) — for SD, save mdat position and skip, continue searching moov
+                static uint32_t saved_mdat_start = 0;
+                static uint32_t saved_mdat_size = 0;
                 uint32_t sz = atom_size.to_uint32(16);
-                if(sz==0) sz = 0;
+                AUDIO_INFO("non-progressive M4A: mdat before moov, size %u, saving and skipping for SD", sz);
+                saved_mdat_start = m_m4aHdr.headerSize + 8; // data starts after 8 byte header
+                saved_mdat_size = (sz > 8) ? (sz - 8) : 0;
+                // Save in m4aHdr for later use (reuse audioDataPos as temp storage if needed)
+                m_m4aHdr.audioDataPos = saved_mdat_start;
+                m_m4aHdr.sizeof_mdat = saved_mdat_size;
                 m_m4aHdr.retvalue += sz;
                 m_m4aHdr.headerSize += sz;
-                // Continue searching for moov instead of stopping
                 return 0;
             }
 //            /*AUDIO_LOG_DEBUG*/AUDIO_INFO("atom %s @ %i, size: %i, ends @ %i", atom_name.c_get(), m_m4aHdr.headerSize, atom_size.to_uint32(16), m_m4aHdr.headerSize + atom_size.to_uint32(16));
@@ -2466,7 +2470,19 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     if(m_controlCounter == M4A_MOOV) { // moov
 //        /*AUDIO_LOG_DEBUG*/AUDIO_INFO("moov size remain %i", m_m4aHdr.sizeof_moov);
-        if(m_m4aHdr.sizeof_moov == 0) {m_controlCounter = M4A_CHK; return 0;} // go back
+        if(m_m4aHdr.sizeof_moov == 0) {
+            // OMNIA FIX: if non-progressive and we saved mdat, now seek back to mdat data start and start playback
+            if(m_m4aHdr.audioDataPos>0 && m_m4aHdr.sizeof_mdat>0){
+                AUDIO_INFO("non-progressive M4A: moov parsed, seeking back to mdat at %u size %u", (uint32_t)m_m4aHdr.audioDataPos, (uint32_t)m_m4aHdr.sizeof_mdat);
+                m_audioDataStart = m_m4aHdr.audioDataPos;
+                m_audioDataSize = m_m4aHdr.sizeof_mdat;
+                audioFileSeek(m_audioDataStart);
+                InBuff.resetBuffer();
+                m_controlCounter = M4A_MDAT;
+                return 0;
+            }
+            m_controlCounter = M4A_CHK; return 0;
+        } // go back
 
         atom_name.copy_from((const char*)data + 4, 4);
         atom_size.big_endian(data, 4);
@@ -6794,6 +6810,14 @@ int32_t Audio::newInBuffStart(int32_t m_resumeFilePos){
             if(m_codec == CODEC_OPUS || m_codec == CODEC_VORBIS) {if(InBuff.bufferFilled() < 0xFFFF) return - 1;} // ogg frame <= 64kB
             if(m_codec == CODEC_WAV)   {while((m_resumeFilePos % 4) != 0){m_resumeFilePos++; offset++; if(m_resumeFilePos >= m_audioFileSize) goto exit;}}  // must divisible by four
             if(m_codec == CODEC_MP3)   {offset = mp3_correctResumeFilePos();  if(offset == -1) goto exit; MP3Decoder_ClearBuffer();}
+            if(m_codec == CODEC_AAC)   {
+                // OMNIA FIX from Chat recommendation 4: align AAC on ADTS syncword after seek, reset decoder to avoid time drift
+                int s = AACFindSyncWord(InBuff.getReadPtr(), InBuff.bufferFilled());
+                if(s < 0) goto exit;
+                offset = s;
+                AACDecoder_FreeBuffers();
+                AACDecoder_AllocateBuffers();
+            }
             if(m_codec == CODEC_FLAC)  {offset = flac_correctResumeFilePos(); if(offset == -1) goto exit; FLACDecoderReset();}
             if(m_codec == CODEC_VORBIS){offset = ogg_correctResumeFilePos();  if(offset == -1) goto exit; VORBISDecoder_ClearBuffers();}
             if(m_codec == CODEC_OPUS)  {offset = ogg_correctResumeFilePos();  if(offset == -1) goto exit; OPUSDecoder_ClearBuffers();}

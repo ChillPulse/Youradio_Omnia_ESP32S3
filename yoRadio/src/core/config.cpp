@@ -395,7 +395,12 @@ void Config::setSDpos(uint32_t val){
       player.setResumeFilePos(val-player.sd_min);
       player.sendCommand({PR_PLAY, config.store.lastSdStation});
     }else{
+      // OMNIA FIX from Chat recommendation 4: mute around seek to avoid hearing old buffer with new time
+      player.setOutputPins(false);
+      delay(50);
       player.setFilePos(val-player.sd_min);
+      delay(50);
+      player.setOutputPins(true);
     }
   }
 }
