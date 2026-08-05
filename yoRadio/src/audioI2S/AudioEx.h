@@ -194,6 +194,11 @@ class Audio{
 //    uint32_t     getInBufferSize();           // returns the size of the inputbuffer in bytes
 //    bool         setInBufferSize(size_t mbs); // sets the size of the inputbuffer in bytes
     void         setTone(int8_t gainLowPass, int8_t gainBandPass, int8_t gainHighPass);
+    // OMNIA M4A seek index
+    void omnia_m4aIndexReset();
+    void omnia_m4aIndexInitIfPossible();
+    void omnia_m4aIndexTick(uint16_t maxEntries = 256);
+    bool omnia_m4aSeekMs(uint32_t ms);
     void         setI2SCommFMT_LSB(bool commFMT);
     int          getCodec() { return m_codec; }
     const char*  getCodecname() { return codecname[m_codec]; }
