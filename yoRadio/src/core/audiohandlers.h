@@ -192,7 +192,7 @@ void audio_eof_stream(const char *info){
   if (config.getMode()==PM_WEB){
     player.sendCommand({PR_PLAY, config.lastStation()});
   }else{
-    player.setResumeFilePos( config.sdResumePos==0?0:config.sdResumePos-player.sd_min);
+    player.setResumeFilePos(config.sdResumePos); // FIX: was config.sdResumePos - sd_min causing two coordinate systems
     player.sendCommand({PR_PLAY, config.lastStation()});
   }
 }

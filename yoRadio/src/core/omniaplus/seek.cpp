@@ -1,5 +1,6 @@
 #include "seek.h"
 #include "../player.h"
+#include "../../audioI2S/AudioEx.h"
 #include "../config.h"
 #include <Arduino.h>
 
@@ -53,7 +54,7 @@ void omnia_seek_absolute(uint32_t ms){
   if(ms>durMs) ms=durMs;
 
   // For M4A, use time->sample->offset via stsz index if available (flagship)
-  if(player.getCodec() == 7){ // CODEC_M4A approx
+  if(player.getCodec() == Audio::CODEC_M4A){ // FIX: was 7 which is CODEC_OPUS=7, CODEC_M4A=4
     if(player.omnia_m4aSeekMs(ms)){
       Serial.printf("##SEEK#: M4A time seek %lu ms via stsz index\n", (unsigned long)ms);
       return;
