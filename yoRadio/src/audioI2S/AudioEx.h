@@ -730,7 +730,23 @@ private:
     bool          m_f_Log = false;                  // set in platformio.ini  -DAUDIO_LOG and -DCORE_DEBUG_LEVEL=3 or 4
 //    uint8_t      m_f_channelEnabled = 3;         // internal DAC, both channels
 
-    uint32_t        m_audioDataStart = 0;           // in bytes
+    uint32_t        m_audioDataStart = 0;
+    // ===== OMNIA: M4A seek index (RAM) =====
+    fs::FS*   m_localFS = nullptr;
+    String    m_localPath;
+    File      m_m4aIdxFile;
+    bool      m_m4aIdxValid = false;
+    uint32_t  m_m4aDurSec = 0;
+    uint32_t  m_m4aDurMs  = 0;
+    uint32_t  m_m4aFramesTotal = 0;
+    uint32_t  m_m4aBuildNextFrame = 0;
+    uint32_t  m_m4aBuildNextSec   = 1;
+    uint64_t  m_m4aBuildCumBytes  = 0;
+    uint8_t*  m_m4aSecFrame = nullptr; // actually uint32_t*
+    uint8_t*  m_m4aSecOff = nullptr;
+    bool      m_m4aSeekExactNext = false;
+    uint32_t  m_saved_mdat_start = 0;
+    uint32_t  m_saved_mdat_size = 0;           // in bytes
     size_t          m_audioDataSize = 0;            //
     size_t          m_ibuffSize = 0;                // log buffer size for audio_info()
     float           m_filterBuff[3][2][2][2];       // IIR filters memory for Audio DSP

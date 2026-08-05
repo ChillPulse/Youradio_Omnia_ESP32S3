@@ -7092,3 +7092,49 @@ uint32_t Audio::getHighWatermark(){
 }
 //****************************************************************************************
 #endif  //  if VS1053_CS==255
+
+// ===== OMNIA M4A seek index implementation (skeleton, flagship) =====
+void Audio::omnia_m4aIndexReset(){
+  m_m4aIdxValid = false;
+  m_m4aSeekExactNext = false;
+  if(m_m4aIdxFile) m_m4aIdxFile.close();
+  m_m4aDurSec = 0;
+  m_m4aDurMs = 0;
+  m_m4aFramesTotal = 0;
+  m_m4aBuildNextFrame = 0;
+  m_m4aBuildNextSec = 1;
+  m_m4aBuildCumBytes = 0;
+  if(m_m4aSecFrame){ free(m_m4aSecFrame); m_m4aSecFrame=nullptr; }
+  if(m_m4aSecOff){ free(m_m4aSecOff); m_m4aSecOff=nullptr; }
+  m_saved_mdat_start = 0;
+  m_saved_mdat_size = 0;
+}
+
+void Audio::omnia_m4aIndexInitIfPossible(){
+  // Called after M4A header parsed, when duration and stsz available
+  if(m_codec != CODEC_M4A) return;
+  if(m_audioFileDuration==0) return;
+  // For now, just mark valid to allow seek via byte proportional within audio range
+  m_m4aIdxValid = true;
+  m_m4aDurSec = m_audioFileDuration;
+  m_m4aDurMs = m_audioFileDuration*1000UL;
+}
+
+void Audio::omnia_m4aIndexTick(uint16_t maxEntries){
+  // For flagship, build index lazily - for now no-op to avoid SD contention
+  // Future: read stsz table and build sec->frame/offset arrays
+  (void)maxEntries;
+}
+
+bool Audio::omnia_m4aSeekMs(uint32_t ms){
+  // For M4A, use byte proportional within audio range sd_min..sd_max if index not ready
+  if(m_codec != CODEC_M4A) return false;
+  if(m_audioDataSize==0) return false;
+  if(ms > m_m4aDurMs) ms = m_m4aDurMs;
+  uint32_t audioStart = m_audioDataStart ? m_audioDataStart : 0;
+  uint32_t audioSize = m_audioDataSize ? m_audioDataSize : m_audioFileSize;
+  uint32_t offset = (uint64_t)ms * audioSize / m_m4aDurMs;
+  uint32_t pos = audioStart + offset;
+  m_m4aSeekExactNext = true;
+  return setFilePos(pos);
+}

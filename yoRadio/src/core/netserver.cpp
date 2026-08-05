@@ -300,13 +300,35 @@ void NetServer::processQueue(){
       case TITLE:         sprintf (wsbuf, "{\"payload\":[{\"id\":\"meta\", \"value\": \"%s\"}]}", config.station.title); telnet.printf("##CLI.META#: %s\n> ", config.station.title); break;
       case VOLUME:        sprintf (wsbuf, "{\"payload\":[{\"id\":\"volume\", \"value\": %d}]}", config.store.volume); telnet.printf("##CLI.VOL#: %d\n", config.store.volume); break;
       case NRSSI:         sprintf (wsbuf, "{\"payload\":[{\"id\":\"rssi\", \"value\": %d}]}", rssi); /*rssi = 255;*/ break;
-      case SDPOS:         sprintf (wsbuf, "{\"sdpos\": %d,\"sdend\": %d,\"sdtpos\": %d,\"sdtend\": %d}", 
-                                  player.getFilePos(), 
-                                  player.getFileSize(), 
-                                  player.getAudioCurrentTime(), 
-                                  player.getAudioFileDuration()); 
-                                  break;
-      case SDLEN:         sprintf (wsbuf, "{\"sdmin\": %d,\"sdmax\": %d}", player.sd_min, player.sd_max); break;
+            case SDPOS: {
+          // OMNIA FIX from Chat 6: make SDPOS always valid for UI even when duration is 0
+          uint32_t sdtpos = player.getAudioCurrentTime();
+          uint32_t sdtend = player.getAudioFileDuration();
+          uint32_t sdpos = player.getFilePos();
+          uint32_t sdend = player.getFileSize();
+          uint32_t bitrate = player.getBitRate();
+          if(sdtend==0 && sdend>0){
+            uint32_t br = bitrate ? bitrate : 128000;
+            sdtend = sdend*8 / br;
+          }
+          if(sdtpos==0 && sdend>0 && sdpos>0 && sdtend>0){
+            sdtpos = (uint64_t)sdpos * sdtend / sdend;
+          }
+          sprintf (wsbuf, "{\"sdpos\": %d,\"sdend\": %d,\"sdtpos\": %d,\"sdtend\": %d}", 
+                          sdpos, sdend, sdtpos, sdtend); 
+          break;
+        }
+            case SDLEN: {
+          // OMNIA FIX: ensure sdmin/sdmax valid for all codecs, not only when audio_progress() arrived
+          uint32_t sdmin = player.sd_min;
+          uint32_t sdmax = player.sd_max;
+          if(sdmax==0){
+            sdmax = player.getFileSize();
+            sdmin = 0;
+          }
+          sprintf (wsbuf, "{\"sdmin\": %d,\"sdmax\": %d}", sdmin, sdmax); 
+          break;
+        }
       case SDSNUFFLE:     sprintf (wsbuf, "{\"snuffle\": %d}", config.store.sdsnuffle); break;
       case BITRATE:       sprintf (wsbuf, "{\"payload\":[{\"id\":\"bitrate\", \"value\": %d}, {\"id\":\"fmt\", \"value\": \"%s\"}]}", config.station.bitrate, getFormat(config.configFmt)); break;
       case MODE:          sprintf (wsbuf, "{\"payload\":[{\"id\":\"playerwrap\", \"value\": \"%s\"}]}", player.status() == PLAYING ? "playing" : "stopped"); telnet.info(); break;

@@ -40,38 +40,42 @@ bool omnia_seek_handle(const char* cmd){
 }
 
 void omnia_seek_absolute(uint32_t ms){
-  // For M4A, disable byte-seek as it's unstable for MP4 container (as per Chat 5 recommendation)
-  // Check codec
-  uint8_t codec = player.getCodec();
-  const uint8_t CODEC_M4A = 7; // from AudioEx.h, approximate — actual value may differ, we check via getCodec() == 5? We'll just check file extension fallback
-  // Simple check: if current file is .m4a, disable seek
-  // For flagship, we disable seek for M4A to avoid next track jump
-  // We can detect via file name in config.station.url
-  String path = config.station.url;
-  path.toLowerCase();
-  if(path.endsWith(".m4a")){
-    Serial.println("##SEEK#: M4A seek disabled (byte-seek unstable for MP4 container) — use MP3/FLAC/WAV for seek");
-    return;
-  }
-  Serial.printf("##SEEK#: absolute %lu ms\n", (unsigned long)ms);
   if(!player.isRunning()) return;
-  uint32_t fileSize = player.getFileSize();
   uint32_t durMs = player.getAudioFileDuration()*1000UL;
   if(durMs==0){
+    // Fallback from fileSize
+    uint32_t fileSize = player.getFileSize();
     uint32_t bitrate = player.getBitRate();
     if(bitrate==0) bitrate=128000;
     if(fileSize>0) durMs = (uint64_t)fileSize*8*1000 / bitrate;
   }
-  if(durMs==0 || fileSize==0) return;
+  if(durMs==0) return;
   if(ms>durMs) ms=durMs;
-  uint32_t newPos = (uint64_t)ms * fileSize / durMs;
-  if(newPos>=fileSize) newPos=fileSize-1;
+
+  // For M4A, use time->sample->offset via stsz index if available (flagship)
+  if(player.getCodec() == 7){ // CODEC_M4A approx
+    if(player.omnia_m4aSeekMs(ms)){
+      Serial.printf("##SEEK#: M4A time seek %lu ms via stsz index\n", (unsigned long)ms);
+      return;
+    }
+    // If index not ready, fall back to byte proportional within audio range
+  }
+
+  uint32_t start = player.sd_min;
+  uint32_t end = player.sd_max;
+  if(end<=start){
+    start = 0;
+    end = player.getFileSize();
+  }
+  if(end<=start) return;
+  uint32_t pos = start + (uint64_t)ms * (end - start) / durMs;
+  Serial.printf("##SEEK#: absolute %lu ms -> pos %lu (range %lu-%lu dur %lu)\n", (unsigned long)ms, (unsigned long)pos, (unsigned long)start, (unsigned long)end, (unsigned long)durMs);
   player.setOutputPins(false);
-  delay(50);
-  bool ok = player.setFilePos(newPos);
-  delay(50);
+  delay(30);
+  bool ok = player.setFilePos(pos);
+  delay(30);
   player.setOutputPins(true);
-  Serial.printf("##SEEK#: setFilePos %lu ok=%d\n", (unsigned long)newPos, ok);
+  Serial.printf("##SEEK#: setFilePos %lu ok=%d\n", (unsigned long)pos, ok);
 }
 
 void omnia_seek_relative(int32_t deltaMs){
@@ -93,16 +97,28 @@ void omnia_seek_relative(int32_t deltaMs){
 void omnia_seek_percent(uint16_t permille){
   Serial.printf("##SEEK#: percent %u/1000\n", permille);
   uint32_t fileSize = player.getFileSize();
-  if(fileSize==0) return;
-  // Disable for M4A as well
+  uint32_t start = player.sd_min;
+  uint32_t end = player.sd_max;
+  if(end<=start){
+    start = 0;
+    end = fileSize;
+  }
+  if(end<=start) return;
   String path = config.station.url;
   path.toLowerCase();
   if(path.endsWith(".m4a")){
-    Serial.println("##SEEK#: M4A seek disabled");
+    // For M4A, convert percent to ms then use m4aSeek
+    uint32_t durMs = player.getAudioFileDuration()*1000UL;
+    if(durMs==0 && fileSize>0){
+      uint32_t br = player.getBitRate(); if(br==0) br=128000;
+      durMs = (uint64_t)fileSize*8*1000 / br;
+    }
+    uint32_t ms = (uint64_t)permille * durMs / 1000;
+    omnia_seek_absolute(ms);
     return;
   }
-  uint32_t newPos = (uint64_t)permille * fileSize / 1000;
-  if(newPos>=fileSize) newPos=fileSize-1;
+  uint32_t newPos = start + (uint64_t)permille * (end - start) / 1000;
+  if(newPos>=end) newPos=end-1;
   player.setOutputPins(false);
   delay(30);
   bool ok = player.setFilePos(newPos);
@@ -113,7 +129,7 @@ void omnia_seek_percent(uint16_t permille){
 
 void omnia_seek_start(bool forward){
   seekingActive=true; seekDirForward=forward; seekHoldStartMs=millis();
-  Serial.printf("##SEEK#: start %s\n", forward?"+":"-");
+  Serial.printf("##SEEK#: start %s (accel 5s/10s/30s/60s)\n", forward?"+":"-");
 }
 
 void omnia_seek_stop(){
