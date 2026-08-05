@@ -3869,7 +3869,12 @@ void Audio::processLocalFile() {
         return;
     }
 
-    m_prlf.availableBytes = min(InBuff.writeSpace(), m_audioFileSize - m_audioFilePosition);
+            // OMNIA FIX from Chat 5: limit reading to end of audio data (mdat), not end of file (includes moov)
+        {
+            uint32_t endPos = (m_audioDataStart + m_audioDataSize) ? (m_audioDataStart + m_audioDataSize) : m_audioFileSize;
+            uint32_t remaining = (endPos > m_audioFilePosition) ? (endPos - m_audioFilePosition) : 0;
+            m_prlf.availableBytes = min(InBuff.writeSpace(), remaining);
+        }
 
     m_prlf.bytesAddedToBuffer = audioFileRead(InBuff.getWritePtr(), min(m_prlf.availableBytes, UINT16_MAX));
     if(m_prlf.bytesAddedToBuffer > 0) {InBuff.bytesWritten(m_prlf.bytesAddedToBuffer);}
