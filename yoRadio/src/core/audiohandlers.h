@@ -158,53 +158,32 @@ void audio_id3data(const char *info){  //id3 metadata
     telnet.printf("##AUDIO.ID3#: %s\n", info);
 }
 
-void audio_eof_mp3(const char *info){  //end of file — OMNIA v8.2 fix repeat/shuffle logic
-    config.sdResumePos = 0;
-    // Respect repeat/shuffle modes for SD
-    if(config.getMode()==PM_SDCARD){
-        extern RepeatMode omnia_shuffle_get_repeat();
-        extern ShuffleMode omnia_shuffle_get_shuffle();
+static volatile uint32_t g_lastEofMs = 0;
+static volatile bool g_eofHandled = false;
+
+static void onAudioEofCommon(const char *info){
+    g_lastEofMs = millis();
+    g_eofHandled = true;
+    // auto-next only for local sources (SD/USB), not WEB radio
+    if(config.getMode()!=0){
         extern uint16_t omnia_shuffle_next();
-        RepeatMode r = omnia_shuffle_get_repeat();
-        ShuffleMode s = omnia_shuffle_get_shuffle();
-        if(r==REPEAT_ONE){
-            // repeat current track
-            player.sendCommand({PR_PLAY, config.lastStation()});
-            return;
-        }
-        // For OFF and ALL, use shuffle_next logic which returns 0 if should stop
-        if(s==SHUFFLE_ON){
-            uint16_t nxt = omnia_shuffle_next();
-            if(nxt==0){
-                // stop at end if repeat OFF
-                player.sendCommand({PR_STOP, 0});
-            }else{
-                config.setLastStation(nxt);
-                player.sendCommand({PR_PLAY, nxt});
-            }
-            return;
+        extern void omnia_shuffle_on_track_change(uint16_t);
+        uint16_t nxt = omnia_shuffle_next();
+        if(nxt>0){
+            config.setLastStation(nxt);
+            player.sendCommand({PR_PLAY, (int)nxt});
         }else{
-            // shuffle OFF
-            if(r==REPEAT_OFF){
-                if(config.lastStation() < config.playlistLength()){
-                    uint16_t nxt = config.lastStation()+1;
-                    config.setLastStation(nxt);
-                    player.sendCommand({PR_PLAY, nxt});
-                }else{
-                    player.sendCommand({PR_STOP, 0}); // stop after last
-                }
-            }else if(r==REPEAT_ALL){
-                uint16_t nxt = config.lastStation() % config.playlistLength() + 1;
-                config.setLastStation(nxt);
-                player.sendCommand({PR_PLAY, nxt});
-            }else{ // REPEAT_ONE already handled
-                player.sendCommand({PR_PLAY, config.lastStation()});
-            }
-            return;
+            player.sendCommand({PR_STOP, 0});
         }
     }
-    // For WEB mode, original behavior
-    player.next();
+}
+
+void audio_eof(const char *info){
+    onAudioEofCommon(info);
+}
+
+void audio_eof_mp3(const char *info){  //end of file — keep both names for compatibility
+    onAudioEofCommon(info);
 }
 
 void audio_eof_stream(const char *info){

@@ -30,12 +30,10 @@ void omnia_usb_status_send(const char* state, const char* fs, uint64_t size, int
 
 void omnia_progress_loop(){
   uint32_t now = millis();
-  if(now - lastProgressMs < 300) return; // ~3Hz, avoid spam
+  if(now - lastProgressMs < 300) return;
   lastProgressMs = now;
   if(!player.isRunning()) return;
-  // Fix as per chat recommendation: don't hardcode !=1, allow SD and USB (and future)
-  // PM_WEB =0, PM_SDCARD=1
-  if(config.getMode()==0) return; // was !=1, now only skip WEB
+  if(config.getMode()==0) return; // only SD/USB
 
   uint32_t filePos = player.getFilePos();
   uint32_t fileSize = player.getFileSize();
@@ -46,8 +44,12 @@ void omnia_progress_loop(){
   uint32_t curMs = curSec*1000UL;
   uint32_t durMs = durSec*1000UL;
 
-  if(durMs==0 && fileSize>0 && bitrate>0){
-    durMs = (uint64_t)fileSize*8*1000 / bitrate;
+  // FIX from Chat 5: if bitrate==0, use fallback 128k to make UI alive immediately
+  uint32_t br = bitrate;
+  if(br==0) br = 128000;
+
+  if(durMs==0 && fileSize>0){
+    durMs = (uint64_t)fileSize*8*1000 / br;
   }
 
   uint16_t percentX10 = 0;
@@ -74,6 +76,6 @@ void omnia_progress_loop(){
   p.fileIdx = idx;
   p.fileTotal = total;
 
-  // Fix as per chat: always send, even if 0/0, so UI doesn't think no progress
+  // Always send, even if 0/0, to keep WebUI alive (was filtered before)
   omnia_progress_send(p);
 }

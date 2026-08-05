@@ -223,12 +223,26 @@ void Player::loop() {
   omnia_progress_loop();
   omnia_usb_host_loop();
   if(!isRunning() && _status==PLAYING){
-    // OMNIA v8.2 — auto-next is now handled in audio_eof_mp3 (which respects shuffle+repeat)
-    // Here we just ensure we don't double-trigger, just stop if not already handled
-    // The audio_eof_mp3 callback already sent PR_PLAY for next track, so just _stop if no next was sent
-    // To avoid double, we just call _stop(true) and let audio_eof_mp3 handle next via its own PR_PLAY
-    // Actually audio_eof_mp3 is called from Audio lib on EOF, which already does next/stop, so here we just _stop to clear state
+    // OMNIA FIX from Chat recommendation 5: fallback if EOF callback not called (M4A case)
+    extern volatile uint32_t g_lastEofMs;
+    extern volatile bool g_eofHandled;
+    if(config.getMode()!=0){
+        if(!g_eofHandled || (millis() - g_lastEofMs) > 500){
+            // Consider this as track end and try next
+            extern uint16_t omnia_shuffle_next();
+            uint16_t nxt = omnia_shuffle_next();
+            if(nxt>0){
+                config.setLastStation(nxt);
+                sendCommand({PR_PLAY, (int)nxt});
+            }else{
+                _stop(true);
+            }
+            g_eofHandled = false;
+            return;
+        }
+    }
     _stop(true);
+    g_eofHandled = false;
     return;
   }
   if(_volTimer){
