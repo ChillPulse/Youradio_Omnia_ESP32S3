@@ -320,9 +320,10 @@ void NetServer::processQueue(){
         }
             case SDLEN: {
           // OMNIA FIX: ensure sdmin/sdmax valid for all codecs, not only when audio_progress() arrived
+          // FIX from Chat 9: check sdmax==0 || sdmax<=sdmin to avoid disabled seek bar
           uint32_t sdmin = player.sd_min;
           uint32_t sdmax = player.sd_max;
-          if(sdmax==0){
+          if(sdmax==0 || sdmax<=sdmin){
             sdmax = player.getFileSize();
             sdmin = 0;
           }
