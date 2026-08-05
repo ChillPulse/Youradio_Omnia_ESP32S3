@@ -164,10 +164,10 @@ inline volatile bool g_eofHandled = false;
 static void onAudioEofCommon(const char *info){
     g_lastEofMs = millis();
     g_eofHandled = true;
+    config.sdResumePos = 0; // FIX: reset resume pos on track end, otherwise next track starts from end and instantly closes (seen in Log14 for AAC)
     // auto-next only for local sources (SD/USB), not WEB radio
     if(config.getMode()!=0){
         extern uint16_t omnia_shuffle_next();
-        extern void omnia_shuffle_on_track_change(uint16_t);
         uint16_t nxt = omnia_shuffle_next();
         if(nxt>0){
             config.setLastStation(nxt);

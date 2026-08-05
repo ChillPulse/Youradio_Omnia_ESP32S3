@@ -388,18 +388,39 @@ void Config::setWeatherKey(const char *val){
   display.putRequest(NEWMODE, CLEAR);
   display.putRequest(NEWMODE, PLAYER);
 }
+static uint32_t clampAbsSdPos(uint32_t val){
+  uint32_t sdmin = player.sd_min;
+  uint32_t sdmax = player.sd_max;
+  if(sdmax == 0 || sdmax <= sdmin){
+    sdmin = 0;
+    sdmax = player.getFileSize();
+  }
+  uint32_t absPos = val;
+  // If val already in absolute range, keep it
+  if(!(val >= sdmin && val <= sdmax)){
+    // Else treat as relative (0..len)
+    uint32_t len = (sdmax > sdmin) ? (sdmax - sdmin) : 0;
+    if(len && val <= len){
+      absPos = sdmin + val;
+    }
+  }
+  if(absPos < sdmin) absPos = sdmin;
+  if(sdmax && absPos >= sdmax) absPos = sdmax - 1;
+  return absPos;
+}
+
 void Config::setSDpos(uint32_t val){
   if (getMode()==PM_SDCARD){
     sdResumePos = 0;
+    uint32_t absPos = clampAbsSdPos(val);
     if(!player.isRunning()){
-      player.setResumeFilePos(val-player.sd_min);
+      player.setResumeFilePos(absPos);
       player.sendCommand({PR_PLAY, config.store.lastSdStation});
     }else{
-      // OMNIA FIX from Chat recommendation 4: mute around seek to avoid hearing old buffer with new time
       player.setOutputPins(false);
-      delay(50);
-      player.setFilePos(val-player.sd_min);
-      delay(50);
+      delay(30);
+      player.setFilePos(absPos);
+      delay(30);
       player.setOutputPins(true);
     }
   }

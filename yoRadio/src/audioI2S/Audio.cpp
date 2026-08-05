@@ -1628,7 +1628,7 @@ int Audio::read_FLAC_Header(uint8_t* data, size_t len) {
             AUDIO_INFO("BitRate: %lu", m_nominal_bitrate);
 //            audio_bitrate(m_nominal_bitrate);
         }
-        if(audio_progress) audio_progress(m_audioDataStart, m_audioDataSize);
+        if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize); // FIX: endpos = start+size, was sending size as endpos causing sd_min/sd_max wrong
         m_rflh.retvalue = 0;
         return 0;
     }
@@ -1852,7 +1852,7 @@ int Audio::read_ID3_Header(uint8_t* data, size_t len) {
             m_audioDataSize = m_audioFileSize;
 //            if(!m_f_m3u8data) AUDIO_INFO("Audio-Length: %u", m_audioDataSize);
             m_controlCounter = 99; // have xing?
-            if(audio_progress) audio_progress(m_audioDataStart, m_audioDataSize);
+            if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize); // FIX: endpos = start+size, was sending size as endpos causing sd_min/sd_max wrong
             return 0; // error, no ID3 signature found
         }
         m_ID3Hdr.ID3version = *(data + 3);
@@ -2270,7 +2270,7 @@ int Audio::read_ID3_Header(uint8_t* data, size_t len) {
             m_controlCounter = 100; // ok
             m_audioDataSize = m_audioFileSize - m_audioDataStart;
             if(!m_f_m3u8data) AUDIO_INFO("Audio-Length: %u", m_audioDataSize);
-            if(audio_progress) audio_progress(m_audioDataStart, m_audioDataSize);
+            if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize); // FIX: endpos = start+size, was sending size as endpos causing sd_min/sd_max wrong
 
             uint32_t hdr = bigEndian(data, 4);
             if ((hdr & 0xFFE00000) != 0xFFE00000) AUDIO_INFO("Syncword not found"); // check sync
