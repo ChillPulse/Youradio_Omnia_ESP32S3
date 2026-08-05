@@ -158,8 +158,8 @@ void audio_id3data(const char *info){  //id3 metadata
     telnet.printf("##AUDIO.ID3#: %s\n", info);
 }
 
-static volatile uint32_t g_lastEofMs = 0;
-static volatile bool g_eofHandled = false;
+inline volatile uint32_t g_lastEofMs = 0;
+inline volatile bool g_eofHandled = false;
 
 static void onAudioEofCommon(const char *info){
     g_lastEofMs = millis();
