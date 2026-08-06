@@ -2471,14 +2471,14 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
     if(m_controlCounter == M4A_MOOV) { // moov
 //        /*AUDIO_LOG_DEBUG*/AUDIO_INFO("moov size remain %i", m_m4aHdr.sizeof_moov);
         if(m_m4aHdr.sizeof_moov == 0) {
-            // OMNIA FIX: if non-progressive and we saved mdat, now seek back to mdat data start and start playback
+            // OMNIA FIX: if non-progressive and we saved mdat, now seek back to mdat data start
+            // Chat12 Patch B: sync headerSize and go to AMRDY, not MDAT
             if(m_m4aHdr.audioDataPos>0 && m_m4aHdr.sizeof_mdat>0){
                 AUDIO_INFO("non-progressive M4A: moov parsed, seeking back to mdat at %u size %u", (uint32_t)m_m4aHdr.audioDataPos, (uint32_t)m_m4aHdr.sizeof_mdat);
-                m_audioDataStart = m_m4aHdr.audioDataPos;
-                m_audioDataSize = m_m4aHdr.sizeof_mdat;
-                audioFileSeek(m_audioDataStart);
+                m_m4aHdr.headerSize = m_m4aHdr.audioDataPos; // KEY per Chat12 Patch B
+                audioFileSeek(m_m4aHdr.headerSize);
                 InBuff.resetBuffer();
-                m_controlCounter = M4A_MDAT;
+                m_controlCounter = M4A_AMRDY;
                 return 0;
             }
             m_controlCounter = M4A_CHK; return 0;
@@ -2967,7 +2967,7 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     uint8_t extLen = 0;
     if(m_controlCounter == M4A_MDAT) {            // mdat
-        m_audioDataSize = m_m4aHdr.sizeof_mdat; // length of this atom
+        m_audioDataSize = m_m4aHdr.sizeof_mdat; // length of this atom - already payload (atom_size-8) from M4A_CHK, per Chat12 Patch C remove extra -8
 
         // Extended Size
         // 00 00 00 01 6D 64 61 74 00 00 00 00 00 00 16 64
@@ -2978,7 +2978,7 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
             m_audioDataSize -= 16;
             extLen = 8;
         }
-        else m_audioDataSize -= 8;
+        // else m_audioDataSize already payload, don't subtract 8 again (Patch C)
         AUDIO_INFO("Audio-Length: %i", m_audioDataSize);
         m_m4aHdr.retvalue = extLen;
         m_m4aHdr.headerSize += extLen;
@@ -3007,6 +3007,8 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
         }
         // OMNIA: init M4A index for flagship seek
         omnia_m4aIndexInitIfPossible();
+        // Chat12 Patch A: report audio progress for SDLEN so WebUI gets correct sd_min/sd_max instead of fallback 0..fileSize
+        if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize);
 
         m_controlCounter = M4A_OKAY; // that's all
         return 0;
