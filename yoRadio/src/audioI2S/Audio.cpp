@@ -6074,6 +6074,7 @@ void Audio::omnia_m4aIndexTick(uint16_t maxEntries){
 
 bool Audio::omnia_m4aSeekMs(uint32_t ms){
   // OMNIA FLAGSHIP: time -> frame -> byte via stsz table (accurate), fallback to byte proportional
+  // Chat10 mini-fix: guard div0
   if(m_codec != CODEC_M4A) return false;
   if(m_audioDataSize==0 && m_audioFileSize==0) return false;
   if(m_m4aDurMs==0 && m_audioFileDuration>0) m_m4aDurMs = m_audioFileDuration*1000UL;
@@ -6083,6 +6084,8 @@ bool Audio::omnia_m4aSeekMs(uint32_t ms){
     if(br==0) br=128000;
     if(m_audioFileSize) m_m4aDurMs = (uint64_t)m_audioFileSize*8*1000 / br;
   }
+  // Chat10 requirement: if still 0 -> return false to avoid div0 crash
+  if(m_m4aDurMs == 0) return false;
   if(ms > m_m4aDurMs) ms = m_m4aDurMs;
 
   uint32_t sampleRate = m_M4A_sampleRate ? m_M4A_sampleRate : (getSampleRate() ? getSampleRate() : 44100);
