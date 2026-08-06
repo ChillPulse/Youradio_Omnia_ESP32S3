@@ -1394,8 +1394,10 @@ size_t Audio::readAudioHeader(uint32_t bytes) {
         }
     }
     if(m_codec == CODEC_AAC) {
-        // stream only, no header
+        // localfile AAC/ADTS: treat whole file as audio block
+        m_audioDataStart = 0;
         m_audioDataSize = m_audioFileSize;
+        if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize); // <-- ВАЖНО per Chat15 Step1
         m_controlCounter = 100;
     }
     if(m_codec == CODEC_FLAC) {
