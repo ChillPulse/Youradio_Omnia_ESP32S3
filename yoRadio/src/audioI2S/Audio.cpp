@@ -5825,7 +5825,963 @@ int32_t Audio::audioFileSeek(uint32_t position, size_t len){
     }
     return res;
 }
+//****************************************************************************************
+/*bool Audio::fsRange(uint32_t range) {
 
+    if((m_dataMode == AUDIO_LOCALFILE) && !m_audiofile){                 AUDIO_ERROR("%s","local file not accessibble"); return false;}  // guard
+    uint32_t startAB = m_audioDataStart;                 // audioblock begin
+    uint32_t endAB = m_audioDataStart + m_audioDataSize; // audioblock end
+    if(range < (int32_t)startAB) {range = startAB;}
+    if(range >= (int32_t)endAB)  {range = endAB;}
+
+    m_validSamples = 0;
+    m_resumeFilePos = range;  // used in processLocalFile()
+    return true;
+}*/
+//****************************************************************************************
+bool Audio::setSampleRate(uint32_t sampRate) {
+    if(!sampRate) sampRate = 48000;
+    if(sampRate < 8000 ) {
+        /*AUDIO_LOG_WARN*/AUDIO_INFO("Sample rate must not be smaller than 8kHz, found: %lu", sampRate);
+        m_sampleRate = 8000;
+    }
+    m_sampleRate = sampRate;
+    m_resampleRatio = (float)m_sampleRate / 48000.0f;
+
+    m_i2s_std_cfg.clk_cfg.sample_rate_hz = m_sampleRate;
+    i2s_channel_disable(m_i2s_tx_handle);
+    i2s_channel_reconfig_std_clock(m_i2s_tx_handle, &m_i2s_std_cfg.clk_cfg);
+    i2s_channel_enable(m_i2s_tx_handle);
+    return true;
+}
+//****************************************************************************************
+uint32_t Audio::getSampleRate() { return m_sampleRate; }
+//****************************************************************************************
+bool Audio::setBitsPerSample(int bits) {
+    if((bits != 16) && (bits != 8)) return false;
+    m_bitsPerSample = bits;
+    return true;
+}
+uint8_t Audio::getBitsPerSample() { return m_bitsPerSample; }
+//****************************************************************************************
+bool Audio::setChannels(int ch) {
+    m_channels = ch;
+    return true;
+}
+uint8_t Audio::getChannels() {
+    if(m_channels == 0) { // this should not happen! #209
+        m_channels = 2;
+    }
+    return m_channels;
+}
+//****************************************************************************************
+uint32_t Audio::getBitRate() {
+    if(m_nominal_bitrate) return m_nominal_bitrate;
+    return m_avr_bitrate;
+}
+//****************************************************************************************
+/*uint64_t Audio::getLastGranulePosition(){
+    if(m_codec != CODEC_OPUS && m_codec != CODEC_VORBIS) return 0;
+
+    uint64_t granulePos = 0;
+    uint8_t* buff = (uint8_t*) ps_malloc(UINT16_MAX);
+    if(!buff) {AUDIO_ERROR("oom"); return 0;}
+    int rangeStart = m_audioFileSize - UINT16_MAX - 1;
+//    AUDIO_LOG_WARN("rangeStart: %lu, audioFileSize: %li, len: %lu, %lu", __LINE__, rangeStart, m_audioFileSize, UINT16_MAX);
+    audioFileSeek(rangeStart, UINT16_MAX);
+    audioFileRead(buff, UINT16_MAX);
+    int32_t pos = specialIndexOfLast(buff, "OggS", UINT16_MAX);
+    if(buff[pos + 5] & 0x04){ // is last page;
+        for (int j = 0; j < 8; j++) {
+            granulePos |= ((uint64_t)buff[pos + 6 + j] << (j * 8));
+        }
+    }
+    AUDIO_INFO("granulePos %llu", granulePos);
+    m_resumeFilePos = 0;
+    if(buff) {free(buff); buff = NULL;}
+    return granulePos;
+}*/
+//****************************************************************************************
+void Audio::setI2SCommFMT_LSB(bool commFMT) {
+    // false: I2S communication format is by default I2S_COMM_FORMAT_I2S_MSB, right->left (AC101, PCM5102A)
+    // true:  changed to I2S_COMM_FORMAT_I2S_LSB for some DACs (PT8211)
+    //        Japanese or called LSBJ (Least Significant Bit Justified) format
+
+    m_f_commFMT = commFMT;
+
+    i2s_channel_disable(m_i2s_tx_handle);
+    if(commFMT) {
+        AUDIO_INFO("commFMT = LSBJ (Least Significant Bit Justified)");
+        m_i2s_std_cfg.slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
+    }
+    else {
+        AUDIO_INFO("commFMT = Philips");
+        m_i2s_std_cfg.slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO);
+    }
+    i2s_channel_reconfig_std_slot(m_i2s_tx_handle, &m_i2s_std_cfg.slot_cfg);
+    i2s_channel_enable(m_i2s_tx_handle);
+}
+//****************************************************************************************
+void Audio::computeVUlevel(int16_t sample[2]) {
+
+    auto avg = [&](uint8_t* sampArr) { // lambda, inner function, compute the average of 8 samples
+        uint16_t av = 0;
+        for(int i = 0; i < 8; i++) { av += sampArr[i]; }
+        return av >> 3;
+    };
+
+    auto largest = [&](uint8_t* sampArr) { // lambda, inner function, compute the largest of 8 samples
+        uint16_t maxValue = 0;
+        for(int i = 0; i < 8; i++) {
+            if(maxValue < sampArr[i]) maxValue = sampArr[i];
+        }
+        return maxValue;
+    };
+
+    if(m_cVUl.cnt0 == 64) {
+        m_cVUl.cnt0 = 0;
+        m_cVUl.cnt1++;
+    }
+    if(m_cVUl.cnt1 == 8) {
+        m_cVUl.cnt1 = 0;
+        m_cVUl.cnt2++;
+    }
+    if(m_cVUl.cnt2 == 8) {
+        m_cVUl.cnt2 = 0;
+        m_cVUl.cnt3++;
+    }
+    if(m_cVUl.cnt3 == 8) {
+        m_cVUl.cnt3 = 0;
+        m_cVUl.cnt4++;
+        m_cVUl.f_vu = true;
+    }
+    if(m_cVUl.cnt4 == 8) { m_cVUl.cnt4 = 0; }
+
+    if(!m_cVUl.cnt0) { // store every 64th sample in the array[0]
+        m_cVUl.sampleArray[LEFTCHANNEL][0][m_cVUl.cnt1] = abs(sample[LEFTCHANNEL] >> 7);
+        m_cVUl.sampleArray[RIGHTCHANNEL][0][m_cVUl.cnt1] = abs(sample[RIGHTCHANNEL] >> 7);
+    }
+    if(!m_cVUl.cnt1) { // store argest from 64 * 8 samples in the array[1]
+        m_cVUl.sampleArray[LEFTCHANNEL][1][m_cVUl.cnt2] = largest(m_cVUl.sampleArray[LEFTCHANNEL][0]);
+        m_cVUl.sampleArray[RIGHTCHANNEL][1][m_cVUl.cnt2] = largest(m_cVUl.sampleArray[RIGHTCHANNEL][0]);
+    }
+    if(!m_cVUl.cnt2) { // store avg from 64 * 8 * 8 samples in the array[2]
+        m_cVUl.sampleArray[LEFTCHANNEL][2][m_cVUl.cnt3] = largest(m_cVUl.sampleArray[LEFTCHANNEL][1]);
+        m_cVUl.sampleArray[RIGHTCHANNEL][2][m_cVUl.cnt3] = largest(m_cVUl.sampleArray[RIGHTCHANNEL][1]);
+    }
+    if(!m_cVUl.cnt3) { // store avg from 64 * 8 * 8 * 8 samples in the array[3]
+        m_cVUl.sampleArray[LEFTCHANNEL][3][m_cVUl.cnt4] = avg(m_cVUl.sampleArray[LEFTCHANNEL][2]);
+        m_cVUl.sampleArray[RIGHTCHANNEL][3][m_cVUl.cnt4] = avg(m_cVUl.sampleArray[RIGHTCHANNEL][2]);
+    }
+    if(m_cVUl.f_vu) {
+        m_cVUl.f_vu = false;
+        vuLeft = avg(m_cVUl.sampleArray[LEFTCHANNEL][3]);
+        if(vuLeft>config.vuThreshold)  config.vuThreshold = vuLeft;
+        vuRight = avg(m_cVUl.sampleArray[RIGHTCHANNEL][3]);
+        if(vuRight>config.vuThreshold) config.vuThreshold = vuRight;
+    }
+    m_cVUl.cnt1++;
+}
+//****************************************************************************************
+uint16_t Audio::get_VUlevel(uint16_t dimension){
+  if(!config.store.vumeter || config.vuThreshold==0) return 0;
+    // avg 0 ... 127
+    if(!m_f_running) return 0;
+
+  uint8_t L = map(vuLeft, config.vuThreshold, 0, 0, dimension);
+  uint8_t R = map(vuRight, config.vuThreshold, 0, 0, dimension);
+  return (L << 8) | R;
+}
+//****************************************************************************************
+void Audio::setTone(int8_t gainLowPass, int8_t gainBandPass, int8_t gainHighPass) {
+
+    // see https://www.earlevel.com/main/2013/10/13/biquad-calculator-v2/
+    // values can be between -40 ... +6 (dB)
+
+/*    m_gain0 = gainLowPass;
+    m_gain1 = gainBandPass;
+    m_gain2 = gainHighPass;	*/
+
+    if(gainLowPass > 0) m_gain0 = map(gainLowPass, 0, 16, 0, 8);
+    else m_gain0 = gainLowPass;
+    if(gainBandPass > 0) m_gain1 = map(gainBandPass, 0, 16, 0, 8);
+    else m_gain1 = gainBandPass;
+    if(gainHighPass > 0) m_gain2 = map(gainHighPass, 0, 16, 0, 8);
+    else m_gain2 = gainHighPass;
+
+    // gain, attenuation (set in digital filters)
+    int db = max(m_gain0, max(m_gain1, m_gain2)) + 3;
+    m_corr = pow10f((float)db / 20);
+
+    IIR_calculateCoefficients(m_gain0, m_gain1, m_gain2);
+
+    /*
+          This will cause a clicking sound when adjusting the EQ.
+          Because when the EQ is adjusted, the IIR filter will be cleared and played,
+          mixed in the audio data frame, and a click-like sound will be produced.
+
+          int16_t tmp[2]; tmp[0] = 0; tmp[1]= 0;
+
+          IIR_filterChain0(tmp, true ); // flush the filter
+          IIR_filterChain1(tmp, true ); // flush the filter
+          IIR_filterChain2(tmp, true ); // flush the filter
+        */
+}
+//****************************************************************************************
+void Audio::forceMono(bool m) { // #100 mono option
+    m_f_forceMono = m;          // false stereo, true mono
+}
+//****************************************************************************************
+void Audio::setBalance(int8_t bal) { // bal -16...16
+//    if(bal < -16) bal = -16;
+//    if(bal > 16) bal = 16;
+    m_balance = bal;
+
+    computeLimit();
+}
+//*************************************************************************************** 
+void Audio::setVolume(uint8_t vol) {
+
+//    uint16_t v = ESP_ARDUINO_VERSION_MAJOR * 100 + ESP_ARDUINO_VERSION_MINOR * 10 + ESP_ARDUINO_VERSION_PATCH;
+//    if(v < 207) AUDIO_INFO("Do not use this ancient Adruino version V%d.%d.%d", ESP_ARDUINO_VERSION_MAJOR, ESP_ARDUINO_VERSION_MINOR, ESP_ARDUINO_VERSION_PATCH);
+
+    if(vol > 254) vol = 254;
+    if(vol < 0) vol = 0;
+    m_vol = vol;
+    computeLimit();
+}
+//****************************************************************************************
+uint8_t Audio::getVolume() { return m_vol; }
+//****************************************************************************************
+uint8_t Audio::getI2sPort() { return m_i2s_num; }
+//****************************************************************************************
+void Audio::computeLimit() {    // is calculated when the volume or balance changes
+    float l = 1, r = 1 /*, v = 1*/; // assume 100%
+
+    /* balance is left -16...+16 right */
+    /* TODO: logarithmic scaling of balance, too? */
+    if(m_balance < 0) { r -= (float)abs(m_balance) / 16; }
+    else if(m_balance > 0) { l -= (float)abs(m_balance) / 16; }
+
+//            v = (double)pow(m_vol, 1.2) / pow(127, 1.2); // square (default)
+// 			// logarithmic
+//            double log1 = log(1);
+//            if(m_vol > 0) { v = m_vol * ((std::exp(log1 + (m_vol - 1) * (std::log(m_vol_steps) - log1) / (m_vol_steps - 1))) / m_vol_steps) / m_vol_steps; }
+//            else { v = 0; }
+
+    m_limit_left = (double)(m_vol * l / 254); 
+    m_limit_right = (double)(m_vol * r / 254); 
+
+    // AUDIO_INFO("m_limit_left %f,  m_limit_right %f ",m_limit_left, m_limit_right);
+}
+//****************************************************************************************
+void Audio::Gain(int16_t* sample) {
+    /* important: these multiplications must all be signed ints, or the result will be invalid */
+    sample[LEFTCHANNEL]  *= m_limit_left ;
+    sample[RIGHTCHANNEL] *= m_limit_right;
+}
+//****************************************************************************************
+uint32_t Audio::inBufferFilled() {
+    // current audio input buffer fillsize in bytes
+    return InBuff.bufferFilled();
+}
+//****************************************************************************************
+/*uint32_t Audio::inBufferFree() {
+    // current audio input buffer free space in bytes
+    return InBuff.freeSpace();
+}
+//****************************************************************************************
+uint32_t Audio::getInBufferSize() {
+    // current audio input buffer size in bytes
+    return InBuff.getBufsize();
+}
+//****************************************************************************************
+bool Audio::setInBufferSize(size_t mbs){
+    size_t oldBuffSize = InBuff.getBufsize();
+    stopSong();
+    bool res = InBuff.setBufsize(mbs);
+    if(res == false){
+        AUDIO_ERROR("%i bytes is not possible, back to %i bytes", mbs, oldBuffSize);
+        InBuff.setBufsize(oldBuffSize);
+    }
+    InBuff.init();
+    return res;
+}	*/
+//****************************************************************************************
+//            ***     D i g i t a l   b i q u a d r a t i c     f i l t e r     ***
+//****************************************************************************************
+void Audio::IIR_calculateCoefficients(int8_t G0, int8_t G1, int8_t G2) { // Infinite Impulse Response (IIR) filters
+
+    // G1 - gain low shelf   set between -40 ... +6 dB
+    // G2 - gain peakEQ      set between -40 ... +6 dB
+    // G3 - gain high shelf  set between -40 ... +6 dB
+    // https://www.earlevel.com/main/2012/11/26/biquad-c-source-code/
+
+    if(getSampleRate() < 1000) return; // fuse
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+    if(G0 < -40) G0 = -40; // -40dB -> Vin*0.01
+    if(G0 > 6) G0 = 6;     // +6dB -> Vin*2
+    if(G1 < -40) G1 = -40;
+    if(G1 > 6) G1 = 6;
+    if(G2 < -40) G2 = -40;
+    if(G2 > 6) G2 = 6;
+
+    const float FcLS = 400;    // Frequency LowShelf[Hz] (500)
+    const float FcPKEQ = 2000; // Frequency PeakEQ[Hz] (3000)
+    float       FcHS = 5000;   // Frequency HighShelf[Hz] (6000)
+
+    if(getSampleRate() < FcHS * 2 - 100) { // Prevent HighShelf filter from clogging
+        FcHS = getSampleRate() / 2 - 100;
+        // according to the sampling theorem, the sample rate must be at least 2 * 6000 >= 12000Hz for a filter
+        // frequency of 6000Hz. If this is not the case, the filter frequency (plus a reserve of 100Hz) is lowered
+        AUDIO_INFO("Highshelf frequency lowered, from 6000Hz to %luHz", (long unsigned int)FcHS);
+    }
+    float K, norm, Q, Fc, V;
+
+    // LOWSHELF
+    Fc = (float)FcLS / (float)getSampleRate(); // Cutoff frequency
+    K = tanf((float)PI * Fc);
+    V = powf(10, fabs(G0) / 20.0);
+
+    if(G0 >= 0) { // boost
+        norm = 1 / (1 + sqrtf(2) * K + K * K);
+        m_filter[LOWSHELF].a0 = (1 + sqrtf(2 * V) * K + V * K * K) * norm;
+        m_filter[LOWSHELF].a1 = 2 * (V * K * K - 1) * norm;
+        m_filter[LOWSHELF].a2 = (1 - sqrtf(2 * V) * K + V * K * K) * norm;
+        m_filter[LOWSHELF].b1 = 2 * (K * K - 1) * norm;
+        m_filter[LOWSHELF].b2 = (1 - sqrtf(2) * K + K * K) * norm;
+    }
+    else { // cut
+        norm = 1 / (1 + sqrtf(2 * V) * K + V * K * K);
+        m_filter[LOWSHELF].a0 = (1 + sqrtf(2) * K + K * K) * norm;
+        m_filter[LOWSHELF].a1 = 2 * (K * K - 1) * norm;
+        m_filter[LOWSHELF].a2 = (1 - sqrtf(2) * K + K * K) * norm;
+        m_filter[LOWSHELF].b1 = 2 * (V * K * K - 1) * norm;
+        m_filter[LOWSHELF].b2 = (1 - sqrtf(2 * V) * K + V * K * K) * norm;
+    }
+
+    // PEAK EQ
+    Fc = (float)FcPKEQ / (float)getSampleRate(); // Cutoff frequency
+    K = tanf((float)PI * Fc);
+    V = powf(10, fabs(G1) / 20.0);
+    Q = 2.5;      // Quality factor
+    if(G1 >= 0) { // boost
+        norm = 1 / (1 + 1 / Q * K + K * K);
+        m_filter[PEAKEQ].a0 = (1 + V / Q * K + K * K) * norm;
+        m_filter[PEAKEQ].a1 = 2 * (K * K - 1) * norm;
+        m_filter[PEAKEQ].a2 = (1 - V / Q * K + K * K) * norm;
+        m_filter[PEAKEQ].b1 = m_filter[PEAKEQ].a1;
+        m_filter[PEAKEQ].b2 = (1 - 1 / Q * K + K * K) * norm;
+    }
+    else { // cut
+        norm = 1 / (1 + V / Q * K + K * K);
+        m_filter[PEAKEQ].a0 = (1 + 1 / Q * K + K * K) * norm;
+        m_filter[PEAKEQ].a1 = 2 * (K * K - 1) * norm;
+        m_filter[PEAKEQ].a2 = (1 - 1 / Q * K + K * K) * norm;
+        m_filter[PEAKEQ].b1 = m_filter[PEAKEQ].a1;
+        m_filter[PEAKEQ].b2 = (1 - V / Q * K + K * K) * norm;
+    }
+
+    // HIGHSHELF
+    Fc = (float)FcHS / (float)getSampleRate(); // Cutoff frequency
+    K = tanf((float)PI * Fc);
+    V = powf(10, fabs(G2) / 20.0);
+    if(G2 >= 0) { // boost
+        norm = 1 / (1 + sqrtf(2) * K + K * K);
+        m_filter[HIFGSHELF].a0 = (V + sqrtf(2 * V) * K + K * K) * norm;
+        m_filter[HIFGSHELF].a1 = 2 * (K * K - V) * norm;
+        m_filter[HIFGSHELF].a2 = (V - sqrtf(2 * V) * K + K * K) * norm;
+        m_filter[HIFGSHELF].b1 = 2 * (K * K - 1) * norm;
+        m_filter[HIFGSHELF].b2 = (1 - sqrtf(2) * K + K * K) * norm;
+    }
+    else {
+        norm = 1 / (V + sqrtf(2 * V) * K + K * K);
+        m_filter[HIFGSHELF].a0 = (1 + sqrtf(2) * K + K * K) * norm;
+        m_filter[HIFGSHELF].a1 = 2 * (K * K - 1) * norm;
+        m_filter[HIFGSHELF].a2 = (1 - sqrtf(2) * K + K * K) * norm;
+        m_filter[HIFGSHELF].b1 = 2 * (K * K - V) * norm;
+        m_filter[HIFGSHELF].b2 = (V - sqrtf(2 * V) * K + K * K) * norm;
+    }
+
+    //    AUDIO_INFO("LS a0=%f, a1=%f, a2=%f, b1=%f, b2=%f", m_filter[0].a0, m_filter[0].a1, m_filter[0].a2,
+    //                                                  m_filter[0].b1, m_filter[0].b2);
+    //    AUDIO_INFO("EQ a0=%f, a1=%f, a2=%f, b1=%f, b2=%f", m_filter[1].a0, m_filter[1].a1, m_filter[1].a2,
+    //                                                  m_filter[1].b1, m_filter[1].b2);
+    //    AUDIO_INFO("HS a0=%f, a1=%f, a2=%f, b1=%f, b2=%f", m_filter[2].a0, m_filter[2].a1, m_filter[2].a2,
+    //                                                  m_filter[2].b1, m_filter[2].b2);
+}
+//****************************************************************************************
+// clang-format off
+void Audio::IIR_filterChain0(int16_t iir_in[2], bool clear) { // Infinite Impulse Response (IIR) filters
+
+    uint8_t z1 = 0, z2 = 1;
+    enum : uint8_t { in = 0, out = 1 };
+
+    if(clear) {
+        memset(m_filterBuff, 0, sizeof(m_filterBuff)); // zero IIR filterbuffer
+        m_ifCh.iir_out0[0] = 0;
+        m_ifCh.iir_out0[1] = 0;
+        iir_in[0] = 0;
+        iir_in[1] = 0;
+    }
+
+    m_ifCh.inSample0[LEFTCHANNEL] = (float)(iir_in[LEFTCHANNEL]);
+    m_ifCh.inSample0[RIGHTCHANNEL] = (float)(iir_in[RIGHTCHANNEL]);
+
+    m_ifCh.outSample0[LEFTCHANNEL] =
+        m_filter[0].a0 * m_ifCh.inSample0[LEFTCHANNEL] + m_filter[0].a1 * m_filterBuff[0][z1][in][LEFTCHANNEL] +
+        m_filter[0].a2 * m_filterBuff[0][z2][in][LEFTCHANNEL] - m_filter[0].b1 * m_filterBuff[0][z1][out][LEFTCHANNEL] -
+        m_filter[0].b2 * m_filterBuff[0][z2][out][LEFTCHANNEL];
+
+    m_filterBuff[0][z2][in][LEFTCHANNEL] = m_filterBuff[0][z1][in][LEFTCHANNEL];
+    m_filterBuff[0][z1][in][LEFTCHANNEL] = m_ifCh.inSample0[LEFTCHANNEL];
+    m_filterBuff[0][z2][out][LEFTCHANNEL] = m_filterBuff[0][z1][out][LEFTCHANNEL];
+    m_filterBuff[0][z1][out][LEFTCHANNEL] = m_ifCh.outSample0[LEFTCHANNEL];
+    m_ifCh.iir_out0[LEFTCHANNEL] = (int16_t)m_ifCh.outSample0[LEFTCHANNEL];
+
+    m_ifCh.outSample0[RIGHTCHANNEL] = m_filter[0].a0 * m_ifCh.inSample0[RIGHTCHANNEL] +
+                              m_filter[0].a1 * m_filterBuff[0][z1][in][RIGHTCHANNEL] +
+                              m_filter[0].a2 * m_filterBuff[0][z2][in][RIGHTCHANNEL] -
+                              m_filter[0].b1 * m_filterBuff[0][z1][out][RIGHTCHANNEL] -
+                              m_filter[0].b2 * m_filterBuff[0][z2][out][RIGHTCHANNEL];
+
+    m_filterBuff[0][z2][in][RIGHTCHANNEL] = m_filterBuff[0][z1][in][RIGHTCHANNEL];
+    m_filterBuff[0][z1][in][RIGHTCHANNEL] = m_ifCh.inSample0[RIGHTCHANNEL];
+    m_filterBuff[0][z2][out][RIGHTCHANNEL] = m_filterBuff[0][z1][out][RIGHTCHANNEL];
+    m_filterBuff[0][z1][out][RIGHTCHANNEL] = m_ifCh.outSample0[RIGHTCHANNEL];
+    m_ifCh.iir_out0[RIGHTCHANNEL] = (int16_t)m_ifCh.outSample0[RIGHTCHANNEL];
+
+    iir_in[LEFTCHANNEL] = m_ifCh.iir_out0[LEFTCHANNEL];
+    iir_in[RIGHTCHANNEL] = m_ifCh.iir_out0[RIGHTCHANNEL];
+    return;
+}
+//****************************************************************************************
+void Audio::IIR_filterChain1(int16_t iir_in[2], bool clear) { // Infinite Impulse Response (IIR) filters
+
+    uint8_t z1 = 0, z2 = 1;
+    enum : uint8_t { in = 0, out = 1 };
+
+    if(clear) {
+        memset(m_filterBuff, 0, sizeof(m_filterBuff)); // zero IIR filterbuffer
+        m_ifCh.iir_out1[0] = 0;
+        m_ifCh.iir_out1[1] = 0;
+        iir_in[0] = 0;
+        iir_in[1] = 0;
+    }
+
+    m_ifCh.inSample1[LEFTCHANNEL] = (float)(iir_in[LEFTCHANNEL]);
+    m_ifCh.inSample1[RIGHTCHANNEL] = (float)(iir_in[RIGHTCHANNEL]);
+
+    m_ifCh.outSample1[LEFTCHANNEL] =
+        m_filter[1].a0 * m_ifCh.inSample1[LEFTCHANNEL] + m_filter[1].a1 * m_filterBuff[1][z1][in][LEFTCHANNEL] +
+        m_filter[1].a2 * m_filterBuff[1][z2][in][LEFTCHANNEL] - m_filter[1].b1 * m_filterBuff[1][z1][out][LEFTCHANNEL] -
+        m_filter[1].b2 * m_filterBuff[1][z2][out][LEFTCHANNEL];
+
+    m_filterBuff[1][z2][in][LEFTCHANNEL] = m_filterBuff[1][z1][in][LEFTCHANNEL];
+    m_filterBuff[1][z1][in][LEFTCHANNEL] = m_ifCh.inSample1[LEFTCHANNEL];
+    m_filterBuff[1][z2][out][LEFTCHANNEL] = m_filterBuff[1][z1][out][LEFTCHANNEL];
+    m_filterBuff[1][z1][out][LEFTCHANNEL] = m_ifCh.outSample1[LEFTCHANNEL];
+    m_ifCh.iir_out1[LEFTCHANNEL] = (int16_t)m_ifCh.outSample1[LEFTCHANNEL];
+
+    m_ifCh.outSample1[RIGHTCHANNEL] = m_filter[1].a0 * m_ifCh.inSample1[RIGHTCHANNEL] +
+                              m_filter[1].a1 * m_filterBuff[1][z1][in][RIGHTCHANNEL] +
+                              m_filter[1].a2 * m_filterBuff[1][z2][in][RIGHTCHANNEL] -
+                              m_filter[1].b1 * m_filterBuff[1][z1][out][RIGHTCHANNEL] -
+                              m_filter[1].b2 * m_filterBuff[1][z2][out][RIGHTCHANNEL];
+
+    m_filterBuff[1][z2][in][RIGHTCHANNEL] = m_filterBuff[1][z1][in][RIGHTCHANNEL];
+    m_filterBuff[1][z1][in][RIGHTCHANNEL] = m_ifCh.inSample1[RIGHTCHANNEL];
+    m_filterBuff[1][z2][out][RIGHTCHANNEL] = m_filterBuff[1][z1][out][RIGHTCHANNEL];
+    m_filterBuff[1][z1][out][RIGHTCHANNEL] = m_ifCh.outSample1[RIGHTCHANNEL];
+    m_ifCh.iir_out1[RIGHTCHANNEL] = (int16_t)m_ifCh.outSample1[RIGHTCHANNEL];
+
+    iir_in[LEFTCHANNEL] = m_ifCh.iir_out1[LEFTCHANNEL];
+    iir_in[RIGHTCHANNEL] = m_ifCh.iir_out1[RIGHTCHANNEL];
+    return;
+}
+//****************************************************************************************
+void Audio::IIR_filterChain2(int16_t iir_in[2], bool clear) { // Infinite Impulse Response (IIR) filters
+
+    uint8_t z1 = 0, z2 = 1;
+    enum : uint8_t { in = 0, out = 1 };
+
+    if(clear) {
+        memset(m_filterBuff, 0, sizeof(m_filterBuff)); // zero IIR filterbuffer
+        m_ifCh.iir_out2[0] = 0;
+        m_ifCh.iir_out2[1] = 0;
+        iir_in[0] = 0;
+        iir_in[1] = 0;
+    }
+
+    m_ifCh.inSample2[LEFTCHANNEL] = (float)(iir_in[LEFTCHANNEL]);
+    m_ifCh.inSample2[RIGHTCHANNEL] = (float)(iir_in[RIGHTCHANNEL]);
+
+    m_ifCh.outSample2[LEFTCHANNEL] =
+        m_filter[2].a0 * m_ifCh.inSample2[LEFTCHANNEL] + m_filter[2].a1 * m_filterBuff[2][z1][in][LEFTCHANNEL] +
+        m_filter[2].a2 * m_filterBuff[2][z2][in][LEFTCHANNEL] - m_filter[2].b1 * m_filterBuff[2][z1][out][LEFTCHANNEL] -
+        m_filter[2].b2 * m_filterBuff[2][z2][out][LEFTCHANNEL];
+
+    m_filterBuff[2][z2][in][LEFTCHANNEL] = m_filterBuff[2][z1][in][LEFTCHANNEL];
+    m_filterBuff[2][z1][in][LEFTCHANNEL] = m_ifCh.inSample2[LEFTCHANNEL];
+    m_filterBuff[2][z2][out][LEFTCHANNEL] = m_filterBuff[2][z1][out][LEFTCHANNEL];
+    m_filterBuff[2][z1][out][LEFTCHANNEL] = m_ifCh.outSample2[LEFTCHANNEL];
+    m_ifCh.iir_out2[LEFTCHANNEL] = (int16_t)m_ifCh.outSample2[LEFTCHANNEL];
+
+    m_ifCh.outSample2[RIGHTCHANNEL] = m_filter[2].a0 * m_ifCh.inSample2[RIGHTCHANNEL] +
+                              m_filter[2].a1 * m_filterBuff[2][z1][in][RIGHTCHANNEL] +
+                              m_filter[2].a2 * m_filterBuff[2][z2][in][RIGHTCHANNEL] -
+                              m_filter[2].b1 * m_filterBuff[2][z1][out][RIGHTCHANNEL] -
+                              m_filter[2].b2 * m_filterBuff[2][z2][out][RIGHTCHANNEL];
+
+    m_filterBuff[2][z2][in][RIGHTCHANNEL] = m_filterBuff[2][z1][in][RIGHTCHANNEL];
+    m_filterBuff[2][z1][in][RIGHTCHANNEL] = m_ifCh.inSample2[RIGHTCHANNEL];
+    m_filterBuff[2][z2][out][RIGHTCHANNEL] = m_filterBuff[2][z1][out][RIGHTCHANNEL];
+    m_filterBuff[2][z1][out][RIGHTCHANNEL] = m_ifCh.outSample2[RIGHTCHANNEL];
+    m_ifCh.iir_out2[RIGHTCHANNEL] = (int16_t)m_ifCh.outSample2[RIGHTCHANNEL];
+
+    iir_in[LEFTCHANNEL] = m_ifCh.iir_out2[LEFTCHANNEL];
+    iir_in[RIGHTCHANNEL] = m_ifCh.iir_out2[RIGHTCHANNEL];
+    return;
+}
+// clang-format on
+//---------------------------------------------------------------------------------------------------------------------------------------------------
+//    AAC - T R A N S P O R T S T R E A M
+//---------------------------------------------------------------------------------------------------------------------------------------------------
+bool Audio::ts_parsePacket(uint8_t* packet, uint8_t* packetStart, uint8_t* packetLength) {
+
+    bool log = false;
+
+    const uint8_t TS_PACKET_SIZE = 188;
+    const uint8_t PAYLOAD_SIZE = 184;
+    const uint8_t PID_ARRAY_LEN = 4;
+
+    (void)PAYLOAD_SIZE; // suppress [-Wunused-variable]
+
+    if(packet == NULL) {
+        if(log) /*AUDIO_LOG_WARN*/AUDIO_INFO("parseTS reset");
+        memset(&m_tspp, 0, sizeof(audiolib::tspp_t));
+        return true;
+    }
+
+    // --------------------------------------------------------------------------------------------------------
+    // 0. Byte SyncByte  | 0 | 1 | 0 | 0 | 0 | 1 | 1 | 1 | always bit pattern of 0x47
+    //---------------------------------------------------------------------------------------------------------
+    // 1. Byte           |PUSI|TP|   |PID|PID|PID|PID|PID|
+    //---------------------------------------------------------------------------------------------------------
+    // 2. Byte           |PID|PID|PID|PID|PID|PID|PID|PID|
+    //---------------------------------------------------------------------------------------------------------
+    // 3. Byte           |TSC|TSC|AFC|AFC|CC |CC |CC |CC |
+    //---------------------------------------------------------------------------------------------------------
+    // 4.-187. Byte      |Payload data if AFC==01 or 11  |
+    //---------------------------------------------------------------------------------------------------------
+
+    // PUSI Payload unit start indicator, set when this packet contains the first byte of a new payload unit.
+    //      The first byte of the payload will indicate where this new payload unit starts.
+    // TP   Transport priority, set when the current packet has a higher priority than other packets with the same PID.
+    // PID  Packet Identifier, describing the payload data.
+    // TSC  Transport scrambling control, '00' = Not scrambled.
+    // AFC  Adaptation field control, 01 – no adaptation field, payload only, 10 – adaptation field only, no payload,
+    //                                11 – adaptation field followed by payload, 00 – RESERVED for future use
+    // CC   Continuity counter, Sequence number of payload packets (0x00 to 0x0F) within each stream (except PID 8191)
+
+    // for(int i = 1; i < 188; i++) {printf("%02X ", packet[i - 1]); if(i && (i % 16 == 0)) printf("\n");}
+    // printf("\n----------\n");
+
+    if(packet[0] != 0x47) {
+        AUDIO_ERROR("ts SyncByte not found, first bytes are 0x%02X 0x%02X 0x%02X 0x%02X", packet[0], packet[1], packet[2], packet[3]);
+        stopSong();
+        return false;
+    }
+    int PID = (packet[1] & 0x1F) << 8 | (packet[2] & 0xFF);
+//    if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("PID: 0x%04X(%d)", PID, PID);
+    int PUSI = (packet[1] & 0x40) >> 6;
+//    if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Payload Unit Start Indicator: %d", PUSI);
+    int AFC = (packet[3] & 0x30) >> 4;
+//    if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Adaption Field Control: %d", AFC);
+
+    int AFL = -1;
+    if((AFC & 0b10) == 0b10) {  // AFC '11' Adaptation Field followed
+        AFL = packet[4] & 0xFF; // Adaptation Field Length
+//        if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Adaptation Field Length: %d", AFL);
+    }
+    int PLS = PUSI ? 5 : 4;     // PayLoadStart, Payload Unit Start Indicator
+    if(AFL > 0) PLS += AFL + 1; // skip adaption field
+
+    if(AFC == 2){ // The TS package contains only an adaptation Field and no user data.
+        *packetStart = AFL + 1;
+        *packetLength = 0;
+        return true;
+    }
+
+    if(PID == 0) {
+        // Program Association Table (PAT) - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+//        if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("PAT");
+        m_tspp.pidNumber = 0;
+        m_tspp.pidOfAAC = 0;
+
+        int startOfProgramNums = 8;
+        int lengthOfPATValue = 4;
+        int sectionLength = ((packet[PLS + 1] & 0x0F) << 8) | (packet[PLS + 2] & 0xFF);
+//        if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Section Length: %d", sectionLength);
+        int program_number, program_map_PID;
+        int indexOfPids = 0;
+        (void)program_number; // [-Wunused-but-set-variable]
+        for(int i = startOfProgramNums; i <= sectionLength; i += lengthOfPATValue) {
+            program_number = ((packet[PLS + i] & 0xFF) << 8) | (packet[PLS + i + 1] & 0xFF);
+            program_map_PID = ((packet[PLS + i + 2] & 0x1F) << 8) | (packet[PLS + i + 3] & 0xFF);
+//            if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Program Num: 0x%04X(%d) PMT PID: 0x%04X(%d)", program_number, program_number, program_map_PID, program_map_PID);
+            m_tspp.pids[indexOfPids++] = program_map_PID;
+        }
+        m_tspp.pidNumber = indexOfPids;
+        *packetStart = 0;
+        *packetLength = 0;
+        return true;
+    }
+    else if(PID == m_tspp.pidOfAAC) {
+//        if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("AAC");
+        uint8_t posOfPacketStart = 4;
+        if(AFL >= 0) {
+            posOfPacketStart = 5 + AFL;
+//            if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("posOfPacketStart: %d", posOfPacketStart);
+        }
+        // Packetized Elementary Stream (PES) - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+//        if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("PES_DataLength %i", m_tspp.PES_DataLength);
+        if(m_tspp.PES_DataLength > 0) {
+            *packetStart = posOfPacketStart + m_tspp.fillData;
+            *packetLength = TS_PACKET_SIZE - posOfPacketStart - m_tspp.fillData;
+//            if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("packetlength %i", *packetLength);
+            m_tspp.fillData = 0;
+            m_tspp.PES_DataLength -= (*packetLength);
+            return true;
+        }
+        else {
+            int firstByte = packet[posOfPacketStart] & 0xFF;
+            int secondByte = packet[posOfPacketStart + 1] & 0xFF;
+            int thirdByte = packet[posOfPacketStart + 2] & 0xFF;
+//            if(log) /*AUDIO_LOG_DEBUG*/INFO ("First 3 bytes: 0x%02X, 0x%02X, 0x%02X", firstByte, secondByte, thirdByte);
+            if(firstByte == 0x00 && secondByte == 0x00 && thirdByte == 0x01) { // Packet start code prefix
+                // --------------------------------------------------------------------------------------------------------
+                // posOfPacketStart + 0...2     0x00, 0x00, 0x01                                          PES-Startcode
+                //---------------------------------------------------------------------------------------------------------
+                // posOfPacketStart + 3         0xE0 (Video) od 0xC0 (Audio)                              StreamID
+                //---------------------------------------------------------------------------------------------------------
+                // posOfPacketStart + 4...5     0xLL, 0xLL                                                PES Packet length
+                //---------------------------------------------------------------------------------------------------------
+                // posOfPacketStart + 6...7                                                               PTS/DTS Flags
+                //---------------------------------------------------------------------------------------------------------
+                // posOfPacketStart + 8         0xXX                                                      header length
+                //---------------------------------------------------------------------------------------------------------
+
+                uint8_t StreamID = packet[posOfPacketStart + 3] & 0xFF;
+                if(StreamID >= 0xC0 && StreamID <= 0xDF) { ; } // okay ist audio stream
+                if(StreamID >= 0xE0 && StreamID <= 0xEF) {AUDIO_ERROR("video stream!"); return false; }
+                int PES_PacketLength = ((packet[posOfPacketStart + 4] & 0xFF) << 8) + (packet[posOfPacketStart + 5] & 0xFF);
+//                if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("PES PacketLength: %d", PES_PacketLength);
+                bool PTS_flag = false;
+                bool DTS_flag = false;
+                int flag_byte1 = packet[posOfPacketStart + 6] & 0xFF;
+                int flag_byte2 = packet[posOfPacketStart + 7] & 0xFF;  (void) flag_byte2; // unused yet
+                if(flag_byte1 & 0b10000000) PTS_flag = true;
+                if(flag_byte1 & 0b00000100) DTS_flag = true;
+//                if(log && PTS_flag) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("PTS_flag is set");
+//                if(log && DTS_flag) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("DTS_flag is set");
+                uint8_t PES_HeaderDataLength = packet[posOfPacketStart + 8] & 0xFF;
+//                if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("PES_headerDataLength %d", PES_HeaderDataLength);
+
+                m_tspp.PES_DataLength = PES_PacketLength;
+                int startOfData = PES_HeaderDataLength + 9;
+                if(posOfPacketStart + startOfData >= 188) { // only fillers in packet
+//                    if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("posOfPacketStart + startOfData %i", posOfPacketStart + startOfData);
+                    *packetStart = 0;
+                    *packetLength = 0;
+                    m_tspp.PES_DataLength -= (PES_HeaderDataLength + 3);
+                    m_tspp.fillData = (posOfPacketStart + startOfData) - 188;
+//                    if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("fillData %i", m_tspp.fillData);
+                    return true;
+                }
+//                if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("First AAC data byte: %02X", packet[posOfPacketStart + startOfData]);
+//                if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Second AAC data byte: %02X", packet[posOfPacketStart + startOfData + 1]);
+                *packetStart = posOfPacketStart + startOfData;
+                *packetLength = TS_PACKET_SIZE - posOfPacketStart - startOfData;
+                m_tspp.PES_DataLength -= (*packetLength);
+                m_tspp.PES_DataLength -= (PES_HeaderDataLength + 3);
+                return true;
+            }
+            if(firstByte == 0 && secondByte == 0 && thirdByte == 0){
+                // PES packet startcode prefix is 0x000000
+                // skip such packets
+                return true;
+            }
+        }
+        *packetStart = 0;
+        *packetLength = 0;
+        AUDIO_ERROR("PES not found");
+        return false;
+    }
+    else if(m_tspp.pidNumber) {
+        //  Program Map Table (PMT) - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+        for(int i = 0; i < m_tspp.pidNumber; i++) {
+            if(PID == m_tspp.pids[i]) {
+//                if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("PMT");
+                int staticLengthOfPMT = 12;
+                int sectionLength = ((packet[PLS + 1] & 0x0F) << 8) | (packet[PLS + 2] & 0xFF);
+//                if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Section Length: %d", sectionLength);
+                int programInfoLength = ((packet[PLS + 10] & 0x0F) << 8) | (packet[PLS + 11] & 0xFF);
+//                if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Program Info Length: %d", programInfoLength);
+                int cursor = staticLengthOfPMT + programInfoLength;
+                while(cursor < sectionLength - 1) {
+                    int streamType = packet[PLS + cursor] & 0xFF;
+                    int elementaryPID = ((packet[PLS + cursor + 1] & 0x1F) << 8) | (packet[PLS + cursor + 2] & 0xFF);
+//                    if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("Stream Type: 0x%02X Elementary PID: 0x%04X", streamType, elementaryPID);
+
+                    if(streamType == 0x0F || streamType == 0x11 || streamType == 0x04) {
+//                        if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("AAC PID discover");
+                        m_tspp.pidOfAAC = elementaryPID;
+                    }
+                    int esInfoLength = ((packet[PLS + cursor + 3] & 0x0F) << 8) | (packet[PLS + cursor + 4] & 0xFF);
+//                    if(log) /*AUDIO_LOG_DEBUG*/AUDIO_INFO("ES Info Length: 0x%04X", esInfoLength);
+                    cursor += 5 + esInfoLength;
+                }
+            }
+        }
+        *packetStart = 0;
+        *packetLength = 0;
+        return true;
+    }
+    // PES received before PAT and PMT seen
+    *packetStart = 0;
+    *packetLength = 0;
+    if(PID > 0) {
+        return true;
+    }
+    return false;
+}
+//------------------------------------------------------------------------------------------------------------------------------------------------
+//    W E B S T R E A M  -  H E L P   F U N C T I O N S
+//------------------------------------------------------------------------------------------------------------------------------------------------
+bool Audio::readMetadata(uint16_t maxBytes, uint16_t *readedBytes, bool first) {
+    *readedBytes = 0;
+    ps_ptr<char>buff(__LINE__); buff.alloc(4096); buff.clear(); // is max 256 *16
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(first) {
+        m_rmet.pos_ml = 0; // determines the current position in metaline
+        m_rmet.metaDataSize = 0;
+        m_rmet.res = 0;
+        return true;
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(!maxBytes) return 0; // guard
+
+    if(!m_rmet.metaDataSize) {
+        int b = audioFileRead(); // First byte of metadata?
+        if (b < 0) {
+            /*AUDIO_LOG_WARN*/AUDIO_ERROR("client->read() failed (%d)", b);
+            return false;
+        }
+        m_rmet.metaDataSize = b * 16;        // New count for metadata including length byte, max 4096
+        m_rmet.pos_ml = 0;
+        buff[m_rmet.pos_ml] = 0; // Prepare for new line
+        *readedBytes = 1;
+        maxBytes -= 1;
+    }
+    if(!m_rmet.metaDataSize) {
+        return *readedBytes;
+    } // metalen is 0
+    int32_t a = audioFileRead((uint8_t*)&buff[m_rmet.pos_ml], min((uint16_t)(m_rmet.metaDataSize - m_rmet.pos_ml), (uint16_t)(maxBytes)));
+
+    if(a > 0){
+        m_rmet.res += a;
+        *readedBytes += a;
+        m_rmet.pos_ml += a;
+    }
+    if(m_rmet.pos_ml == m_rmet.metaDataSize) {
+        buff[m_rmet.pos_ml] = '\0';
+        // buff.hex_dump(m_rmet.metaDataSize);
+        if(buff.strlen() > 0) { // Any info present?
+            // metaline contains artist and song name.  For example:
+            // "StreamTitle='Don McLean - American Pie';StreamUrl='';"
+            // Sometimes it is just other info like:
+            // "StreamTitle='60s 03 05 Magic60s';StreamUrl='';"
+            // Isolate the StreamTitle, remove leading and trailing quotes if present.
+            latinToUTF8(buff);          // convert to UTF-8 if necessary
+            int pos = buff.index_of_icase("song_spot", 0); // remove some irrelevant infos
+            if(pos > 3) {                               // e.g. song_spot="T" MediaBaseId="0" itunesTrackId="0"
+                buff[pos] = 0;
+            }
+            showstreamtitle(buff.get()); // Show artist and title if present in metadata
+        }
+        m_metacount = m_metaint;
+        m_rmet.metaDataSize = 0;
+        m_rmet.pos_ml = 0;
+        buff[m_rmet.pos_ml] = 0; // Prepare for new line
+    }
+    else{
+        return false; // not enough data, next round
+    }
+    return true;
+}
+//****************************************************************************************
+int32_t Audio::getChunkSize(uint16_t *readedBytes, bool first) {
+    uint32_t timeout = 2000; // ms
+    uint32_t ctime;
+
+    if (first) {
+        m_gchs.oneByteOfTwo = false;
+        m_gchs.f_skipCRLF = false;
+        m_gchs.isHttpChunked = true;      // default: We assume http chunked
+        m_gchs.transportLimit = 0;        // 0 = not yet recognized
+        return 0;
+    }
+
+    *readedBytes = 0;
+
+    // if we are in transport chunk mode → return limit
+    if (!m_gchs.isHttpChunked) {
+        return m_gchs.transportLimit;
+    }
+
+    // skip CRLF from the previous chunk (only http-chunked)
+    if (m_gchs.f_skipCRLF) {
+        uint32_t t = millis();
+        if(m_client->available() == 1 && !m_gchs.oneByteOfTwo){
+            int a = audioFileRead(); m_gchs.oneByteOfTwo = true; *readedBytes = 1;
+            if (a != 0x0D) AUDIO_INFO("chunk count error, expected: 0x0D, received: 0x%02X", a);
+            return -1;
+        }
+        if(!m_gchs.oneByteOfTwo){
+            int a = audioFileRead();
+            if (a != 0x0D) AUDIO_INFO("chunk count error, expected: 0x0D, received: 0x%02X", a);
+            *readedBytes += 1;
+            if(!m_client->available()){return -1;}
+        }
+        m_gchs.oneByteOfTwo = false;
+        int b = audioFileRead();
+        if (b != 0x0A) /*AUDIO_LOG_WARN*/AUDIO_INFO("chunk count error, expected: 0x0A, received: 0x%02X", b);
+        *readedBytes += 1;
+        m_gchs.f_skipCRLF = false;
+        if(!m_client->available()){return -1;}
+    }
+
+    // -------- HTTP-chunked-Read Logic --------
+    std::string chunkLine;
+    ctime = millis();
+
+    while (true) {
+        if ((millis() - ctime) > timeout) {
+            AUDIO_INFO("chunkedDataTransfer: timeout");
+            stopSong();
+            return 0;
+        }
+        if (!m_client->available()) continue;
+        int b = audioFileRead();
+        if (b < 0) continue;
+
+        (*readedBytes)++;
+
+        if (b == '\n') break; // End of the line
+        if (b == '\r') continue;
+
+        chunkLine += static_cast<char>(b);
+
+        // Detection: if signs are not hexadecimal and not ';'→ No http chunk
+        if (!isxdigit(b) && b != ';') {
+            // We have no valid HTTP chunk line → assume transport chunking
+            m_gchs.isHttpChunked = false;
+            // determine limit from the current data volume + already read bytes
+            m_gchs.transportLimit = m_client->available() + *readedBytes;
+//            /*AUDIO_LOG_DEBUG*/AUDIO_INFO("No http chunked recognized-switch to transport chunking with limit %u", (unsigned)m_gchs.transportLimit);
+            return m_gchs.transportLimit;
+        }
+    }
+
+    // Extract the hex number (before possibly ';')
+    size_t semicolonPos = chunkLine.find(';');
+    std::string hexSize = (semicolonPos != std::string::npos) ? chunkLine.substr(0, semicolonPos) : chunkLine;
+
+    size_t chunksize = strtoul(hexSize.c_str(), nullptr, 16);
+
+    if (chunksize > 0) {
+        m_gchs.f_skipCRLF = true; // skip next CRLF after data
+    } else {
+        // last chunk: read the final CRLF
+        uint8_t idx = 0;
+        ctime = millis();
+        while (idx < 2 && (millis() - ctime) < timeout) {
+            int ch = audioFileRead();
+            if (ch < 0) continue;
+            idx++;
+        }
+    }
+    return chunksize;
+}
+//****************************************************************************************
+bool Audio::readID3V1Tag() {
+    if (m_codec != CODEC_MP3) return false;
+    ps_ptr<char>chBuff(__LINE__);
+    chBuff.alloc(256);
+
+    const uint8_t* p = InBuff.getReadPtr();
+
+    // Lambda for simplification
+    auto readID3Field = [&](ps_ptr<char>& field, const uint8_t* src, size_t len, const char* label = nullptr) {
+        field.alloc(len + 1, "field");
+        memcpy(field.get(), src, len);
+        field[len] = '\0';
+        latinToUTF8(field);
+        if (field.strlen() > 0 && label) {
+            field.insert(label, 0);
+            /*info(evt_id3data,*/ audio_id3data(field.get());
+        }
+    };
+
+    if (InBuff.bufferFilled() == 128 && startsWith((const char*)p, "TAG")) {
+        ps_ptr<char> title("title"), artist("artist"), album("album"), year("year"), comment("comment");
+
+        readID3Field(title,   p + 3,     30, "Title: ");
+        readID3Field(artist,  p + 33,    30, "Artist: ");
+        readID3Field(album,   p + 63,    30, "Album: ");
+        readID3Field(year,    p + 93,    4,  "Year: ");
+        readID3Field(comment, p + 97,    30, "Comment: ");
+
+        uint8_t zeroByte = p[125];
+        uint8_t track = p[126];
+        uint8_t genre8 = p[127];
+
+        AUDIO_INFO(zeroByte ? "ID3 version: 1" : "ID3 Version 1.1");
+
+        if (zeroByte == 0) {
+            sprintf(chBuff.get(), "Track Number: %d", track);
+            /*info(evt_id3data,*/ audio_id3data(chBuff.get());
+        }
+
+        if (genre8 < 192) {
+            sprintf(chBuff.get(), "Genre: %d", genre8);
+            /*info(evt_id3data,*/ audio_id3data(chBuff.get());
+        }
+
+        return true;
+    }
+
+    if (InBuff.bufferFilled() == 227 && startsWith((const char*)p, "TAG+")) { // "TAG+" "can exist as an extension, does not overwrite" TAG"
+        AUDIO_INFO("ID3 version: 1 - Enhanced TAG");
+
+        ps_ptr<char> title("title"), artist("artist"), album("album"), genre("genre");
+
+        readID3Field(title,  p + 4,     60, "Title: ");
+        readID3Field(artist, p + 64,    60, "Artist: ");
+        readID3Field(album,  p + 124,   60, "Album: ");
+        readID3Field(genre,  p + 185,   30, "Genre: ");
+
+        // optional expansion: speed, start-time, end-time
+        return true;
+    }
+
+    return false;
+    // [1] https://en.wikipedia.org/wiki/List_of_ID3v1_Genres
+    // [2] https://en.wikipedia.org/wiki/ID3#ID3v1_and_ID3v1.1[5]
+}
 //****************************************************************************************
 int32_t Audio::newInBuffStart(int32_t m_resumeFilePos){
         int32_t  offset = 0, buffFillValue = 0, res = 0;
@@ -5843,6 +6799,7 @@ int32_t Audio::newInBuffStart(int32_t m_resumeFilePos){
             while(m_f_audioTaskIsDecoding) vTaskDelay(1); // We can't reset the InBuffer while the decoding is in progress
             m_f_allDataReceived = false;
 
+/* process before */
             if(m_codec == CODEC_M4A){
                 if(!m_m4aSeekExactNext){
                     m_resumeFilePos += m4a_correctResumeFilePos();
@@ -5851,16 +6808,26 @@ int32_t Audio::newInBuffStart(int32_t m_resumeFilePos){
                 m_m4aSeekExactNext = false;
             }
 
+/* skip to position */
             res = audioFileSeek(m_resumeFilePos);
             InBuff.resetBuffer();
             offset = 0;
             audioFileRead(InBuff.getReadPtr() + offset, buffFillValue);
             InBuff.bytesWritten(buffFillValue);
 
+/* process after */
             offset = 0;
             if(m_codec == CODEC_OPUS || m_codec == CODEC_VORBIS) {if(InBuff.bufferFilled() < 0xFFFF) return - 1;} // ogg frame <= 64kB
             if(m_codec == CODEC_WAV)   {while((m_resumeFilePos % 4) != 0){m_resumeFilePos++; offset++; if(m_resumeFilePos >= m_audioFileSize) goto exit;}}  // must divisible by four
             if(m_codec == CODEC_MP3)   {offset = mp3_correctResumeFilePos();  if(offset == -1) goto exit; MP3Decoder_ClearBuffer();}
+            if(m_codec == CODEC_AAC)   {
+                // OMNIA FIX from Chat recommendation 4: align AAC on ADTS syncword after seek, reset decoder to avoid time drift
+                int s = AACFindSyncWord(InBuff.getReadPtr(), InBuff.bufferFilled());
+                if(s < 0) goto exit;
+                offset = s;
+                AACDecoder_FreeBuffers();
+                AACDecoder_AllocateBuffers();
+            }
             if(m_codec == CODEC_FLAC)  {offset = flac_correctResumeFilePos(); if(offset == -1) goto exit; FLACDecoderReset();}
             if(m_codec == CODEC_VORBIS){offset = ogg_correctResumeFilePos();  if(offset == -1) goto exit; VORBISDecoder_ClearBuffers();}
             if(m_codec == CODEC_OPUS)  {offset = ogg_correctResumeFilePos();  if(offset == -1) goto exit; OPUSDecoder_ClearBuffers();}
@@ -5875,9 +6842,6 @@ exit:
         stopSong();
         return offset;
 }
-
-//****************************************************************************************
-
 //****************************************************************************************
 boolean Audio::streamDetection(uint32_t bytesAvail) {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return false;}
