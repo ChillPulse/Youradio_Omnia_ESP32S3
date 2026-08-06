@@ -3005,6 +3005,8 @@ int Audio::read_M4A_Header(uint8_t* data, size_t len) {
         AUDIO_INFO("BitRate: %lu", m_nominal_bitrate);
 //        audio_bitrate(m_nominal_bitrate);
         }
+        // OMNIA: init M4A index for flagship seek
+        omnia_m4aIndexInitIfPossible();
 
         m_controlCounter = M4A_OKAY; // that's all
         return 0;
@@ -6051,11 +6053,17 @@ void Audio::omnia_m4aIndexReset(){
 void Audio::omnia_m4aIndexInitIfPossible(){
   // Called after M4A header parsed, when duration and stsz available
   if(m_codec != CODEC_M4A) return;
-  if(m_audioFileDuration==0) return;
-  // For now, just mark valid to allow seek via byte proportional within audio range
-  m_m4aIdxValid = true;
+  if(m_audioFileDuration==0 && m_audioDataSize==0) return;
+  if(m_audioFileDuration==0 && m_audioDataSize>0 && m_nominal_bitrate){
+    m_audioFileDuration = (m_audioDataSize*8)/m_nominal_bitrate;
+  }
+  m_m4aIdxValid = (m_stsz_position!=0 && m_stsz_numEntries!=0) || (m_audioDataStart!=0);
   m_m4aDurSec = m_audioFileDuration;
   m_m4aDurMs = m_audioFileDuration*1000UL;
+  if(m_m4aDurMs==0 && m_nominal_bitrate){
+    m_m4aDurMs = (uint64_t)m_audioDataSize*8*1000 / m_nominal_bitrate;
+  }
+  AUDIO_INFO("omnia_m4aIndexInit dur=%lus %lums stszPos=%lu entries=%lu valid=%d", (unsigned long)m_m4aDurSec, (unsigned long)m_m4aDurMs, (unsigned long)m_stsz_position, (unsigned long)m_stsz_numEntries, m_m4aIdxValid);
 }
 
 void Audio::omnia_m4aIndexTick(uint16_t maxEntries){
@@ -6065,14 +6073,81 @@ void Audio::omnia_m4aIndexTick(uint16_t maxEntries){
 }
 
 bool Audio::omnia_m4aSeekMs(uint32_t ms){
-  // For M4A, use byte proportional within audio range sd_min..sd_max if index not ready
+  // OMNIA FLAGSHIP: time -> frame -> byte via stsz table (accurate), fallback to byte proportional
   if(m_codec != CODEC_M4A) return false;
-  if(m_audioDataSize==0) return false;
+  if(m_audioDataSize==0 && m_audioFileSize==0) return false;
+  if(m_m4aDurMs==0 && m_audioFileDuration>0) m_m4aDurMs = m_audioFileDuration*1000UL;
+  if(m_m4aDurMs==0){
+    // fallback duration from fileSize/bitrate if needed
+    uint32_t br = m_nominal_bitrate ? m_nominal_bitrate : m_avr_bitrate;
+    if(br==0) br=128000;
+    if(m_audioFileSize) m_m4aDurMs = (uint64_t)m_audioFileSize*8*1000 / br;
+  }
   if(ms > m_m4aDurMs) ms = m_m4aDurMs;
+
+  uint32_t sampleRate = m_M4A_sampleRate ? m_M4A_sampleRate : (getSampleRate() ? getSampleRate() : 44100);
+  if(sampleRate==0) sampleRate=44100;
+  const uint32_t samplesPerFrame = 1024; // AAC-LC
+
+  // frame index from ms: ms * sampleRate / (samplesPerFrame*1000)
+  uint64_t targetFrame = (uint64_t)ms * sampleRate / (samplesPerFrame * 1000ULL);
+  if(m_stsz_numEntries && targetFrame >= m_stsz_numEntries) targetFrame = m_stsz_numEntries - 1;
+
+  // If stsz table not available, fallback to proportional
+  if(m_stsz_position==0 || m_stsz_numEntries==0){
+    uint32_t audioStart = m_audioDataStart ? m_audioDataStart : 0;
+    uint32_t audioSize = m_audioDataSize ? m_audioDataSize : m_audioFileSize;
+    uint32_t offset = (m_m4aDurMs) ? (uint64_t)ms * audioSize / m_m4aDurMs : 0;
+    uint32_t pos = audioStart + offset;
+    m_m4aSeekExactNext = true;
+    AUDIO_INFO("m4aSeekMs fallback proportional ms=%lu -> pos %lu (no stsz)", (unsigned long)ms, (unsigned long)pos);
+    return setFilePos(pos);
+  }
+
+  // Accurate: sum stsz entries 0..targetFrame-1
+  uint64_t cumBytes = 0;
+  uint32_t framesToSum = (uint32_t)targetFrame; // sum before target
+  if(framesToSum>0){
+    // read stsz table from file
+    uint32_t curPos = m_audioFilePosition; // save
+    if(audioFileSeek(m_stsz_position)!=0){
+      // fallback
+      uint32_t audioStart = m_audioDataStart ? m_audioDataStart : 0;
+      uint32_t audioSize = m_audioDataSize ? m_audioDataSize : m_audioFileSize;
+      uint32_t offset = (uint64_t)ms * audioSize / m_m4aDurMs;
+      uint32_t pos = audioStart + offset;
+      m_m4aSeekExactNext = true;
+      return setFilePos(pos);
+    }
+    // read in chunks of 64 entries (256 bytes)
+    const uint16_t chunk = 64;
+    uint8_t buf[chunk*4];
+    uint32_t remaining = framesToSum;
+    while(remaining>0){
+      uint16_t toRead = (remaining>chunk)?chunk:remaining;
+      uint16_t bytes = toRead*4;
+      int32_t rd = 0;
+      uint16_t got = 0;
+      while(got < bytes){
+        rd = audioFileRead(buf+got, bytes-got);
+        if(rd<=0){ vTaskDelay(2); continue; }
+        got+=rd;
+      }
+      for(uint16_t i=0;i<toRead;i++){
+        uint32_t sz = (uint32_t)buf[i*4]<<24 | (uint32_t)buf[i*4+1]<<16 | (uint32_t)buf[i*4+2]<<8 | (uint32_t)buf[i*4+3];
+        cumBytes += sz;
+      }
+      remaining -= toRead;
+    }
+    // restore file pos will be overwritten by setFilePos anyway
+  }
+
   uint32_t audioStart = m_audioDataStart ? m_audioDataStart : 0;
-  uint32_t audioSize = m_audioDataSize ? m_audioDataSize : m_audioFileSize;
-  uint32_t offset = (uint64_t)ms * audioSize / m_m4aDurMs;
-  uint32_t pos = audioStart + offset;
+  uint32_t pos = audioStart + (uint32_t)cumBytes;
+  // clamp
+  uint32_t endPos = audioStart + (m_audioDataSize ? m_audioDataSize : m_audioFileSize);
+  if(pos >= endPos) pos = endPos - 1;
   m_m4aSeekExactNext = true;
+  AUDIO_INFO("m4aSeekMs accurate ms=%lu sr=%lu frame=%llu cum=%llu -> pos %lu (stsz %lu entries)", (unsigned long)ms, (unsigned long)sampleRate, (unsigned long long)targetFrame, (unsigned long long)cumBytes, (unsigned long)pos, (unsigned long)m_stsz_numEntries);
   return setFilePos(pos);
 }
