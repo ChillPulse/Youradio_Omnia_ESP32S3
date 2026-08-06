@@ -5753,20 +5753,118 @@ bool Audio::setTimeOffset(int sec) { // fast forward or rewind the current posit
 int32_t Audio::audioFileRead(uint8_t* buff, size_t len){
     if(buff && len == 0) return 0; // nothing to do
     int32_t readed_bytes = 0;
-    uint32_t             offset = 0;
+    uint32_t offset = 0;
+    // This method standardized reading files, regardless of the source (local or web) and the correct number of the bytes read must be determined.
+    int32_t res = -1;
+
+    if(!buff && !len){ // read one byte
+        if(m_dataMode == AUDIO_LOCALFILE){
+            res = m_audiofile.read();
+            if(res >= 0) m_audioFilePosition ++;
+        }
+        else{
+            res = m_client->read();
+            if(res >= 0) m_audioFilePosition ++;
+        }
+    }
+    else { // read len
+        uint32_t t = millis();
+        while(len > 0){
+            if(m_dataMode == AUDIO_LOCALFILE){
+                readed_bytes = m_audiofile.read(buff + offset, len);
+                if(readed_bytes >= 0) {m_audioFilePosition += readed_bytes; len -= readed_bytes; offset += readed_bytes; res = offset; t = millis();}
+                if(readed_bytes <= 0) break;
+            }
+            else{
+                readed_bytes = m_client->read(buff + offset, len);
+                if(readed_bytes >= 0) {m_audioFilePosition += readed_bytes; len -= readed_bytes; offset += readed_bytes; res = offset; t = millis();}
+                if(readed_bytes <= 0) break; // vTaskDelay(5);
+            }
+            if(t + 3000 < millis()){AUDIO_ERROR("timeout"); res = -1; break;}
+        }
+    }
+    return res;
+}
+
+//****************************************************************************************
+int32_t Audio::audioFileSeek(uint32_t position, size_t len){
+    int32_t res = -1;
+
+    if(m_dataMode == AUDIO_LOCALFILE){
+        uint32_t actualPos = m_audiofile.position(); // starts with 1
+        if(actualPos != m_audioFilePosition){
+            /*AUDIO_LOG_WARN*/AUDIO_INFO("actualPos != m_audioFilePosition %lu != %lu", actualPos, m_audioFilePosition);
+            m_audioFilePosition = actualPos;
+        }
+        if(!m_audiofile) return -1;
+        if(position > m_audiofile.size()){
+            /*AUDIO_LOG_WARN*/AUDIO_INFO("position larger than size %lu > %lu", position, m_audiofile.size());
+            position = m_audiofile.size();
+        }
+        bool r = m_audiofile.seek(position);
+        m_audioFilePosition = m_audiofile.position();
+        if(r == false){
+            AUDIO_ERROR("something went wrong");
+            return -1;
+        }
+        else{
+            return position;
+        }
+    }
+    else{
+        if(m_f_acceptRanges){
+            bool r;
+            if(len == 0) len = UINT32_MAX;
+            r = httpRange(position, len);
+            if(res == false){AUDIO_ERROR("http range request was not successful"); return 0;}
+            r = parseHttpRangeHeader();
+            if(r == false){AUDIO_ERROR("http range response was not successful"); return 0;}
+            m_audioFilePosition = position;
+            return position;
+        }
+    }
+    return res;
+}
+
+//****************************************************************************************
+int32_t Audio::newInBuffStart(int32_t m_resumeFilePos){
+        int32_t  offset = 0, buffFillValue = 0, res = 0;
+        uint32_t timeOut = 0;
+
+        if(m_controlCounter != 100){AUDIO_ERROR("timeOffset not possible"); m_resumeFilePos = -1; offset = -1; goto exit;}
+        if(m_resumeFilePos >= (int32_t)m_audioDataStart + m_audioDataSize) {   m_resumeFilePos = -1; offset = -1; goto exit;}
+        if(m_codec == CODEC_M4A && ! m_stsz_position){                         m_resumeFilePos = -1; offset = -1; goto exit;}
+
+        if(m_resumeFilePos <  (int32_t)m_audioDataStart) m_resumeFilePos = m_audioDataStart;
+        buffFillValue = min(m_audioDataSize - m_resumeFilePos, UINT16_MAX);
+
+        m_f_lockInBuffer = true;                          // lock the buffer, the InBuffer must not be re-entered in playAudioData()
+        {
+            while(m_f_audioTaskIsDecoding) vTaskDelay(1); // We can't reset the InBuffer while the decoding is in progress
+            m_f_allDataReceived = false;
+
+            if(m_codec == CODEC_M4A){
+                if(!m_m4aSeekExactNext){
+                    m_resumeFilePos += m4a_correctResumeFilePos();
+                    if(m_resumeFilePos == -1) goto exit;
+                }
+                m_m4aSeekExactNext = false;
+            }
+
+            res = audioFileSeek(m_resumeFilePos);
+            InBuff.resetBuffer();
+            offset = 0;
+            audioFileRead(InBuff.getReadPtr() + offset, buffFillValue);
+            InBuff.bytesWritten(buffFillValue);
+
+            offset = 0;
             if(m_codec == CODEC_OPUS || m_codec == CODEC_VORBIS) {if(InBuff.bufferFilled() < 0xFFFF) return - 1;} // ogg frame <= 64kB
             if(m_codec == CODEC_WAV)   {while((m_resumeFilePos % 4) != 0){m_resumeFilePos++; offset++; if(m_resumeFilePos >= m_audioFileSize) goto exit;}}  // must divisible by four
             if(m_codec == CODEC_MP3)   {offset = mp3_correctResumeFilePos();  if(offset == -1) goto exit; MP3Decoder_ClearBuffer();}
-            if(m_codec == CODEC_M4A){
-              if(!m_m4aSeekExactNext){
-                m_resumeFilePos += m4a_correctResumeFilePos();
-                if(m_resumeFilePos == -1) goto exit;
-              }
-              m_m4aSeekExactNext = false;
-            }
             if(m_codec == CODEC_FLAC)  {offset = flac_correctResumeFilePos(); if(offset == -1) goto exit; FLACDecoderReset();}
             if(m_codec == CODEC_VORBIS){offset = ogg_correctResumeFilePos();  if(offset == -1) goto exit; VORBISDecoder_ClearBuffers();}
             if(m_codec == CODEC_OPUS)  {offset = ogg_correctResumeFilePos();  if(offset == -1) goto exit; OPUSDecoder_ClearBuffers();}
+
 
             InBuff.bytesWasRead(offset);
         }
@@ -5777,6 +5875,9 @@ exit:
         stopSong();
         return offset;
 }
+
+//****************************************************************************************
+
 //****************************************************************************************
 boolean Audio::streamDetection(uint32_t bytesAvail) {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return false;}
