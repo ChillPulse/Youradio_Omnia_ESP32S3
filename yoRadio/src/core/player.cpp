@@ -222,27 +222,31 @@ void Player::loop() {
   syncRateToStmPins();
   omnia_progress_loop();
   omnia_usb_host_loop();
+  // Chat14: fix fallback STOP when EOF already handled
   if(!isRunning() && _status==PLAYING){
-    // OMNIA FIX from Chat recommendation 5: fallback if EOF callback not called (M4A case)
     extern volatile uint32_t g_lastEofMs;
     extern volatile bool g_eofHandled;
     if(config.getMode()!=0){
-        if(!g_eofHandled || (millis() - g_lastEofMs) > 500){
-            // Consider this as track end and try next
-            extern uint16_t omnia_shuffle_next();
-            uint16_t nxt = omnia_shuffle_next();
-            if(nxt>0){
-                config.setLastStation(nxt);
-                sendCommand({PR_PLAY, (int)nxt});
-            }else{
-                _stop(true);
-            }
+        if(g_eofHandled){
+            // EOF already handled, wait for queued PR_PLAY/PR_STOP to execute
+            if(millis() - g_lastEofMs < 2000) return;
+            // stuck >2 sec -> consider error
             g_eofHandled = false;
+            _stop(true);
             return;
         }
+        // EOF not yet handled - this is fallback for crash/error where eof callback didn't come
+        extern uint16_t omnia_shuffle_next();
+        uint16_t nxt = omnia_shuffle_next();
+        if(nxt>0){
+            config.setLastStation(nxt);
+            sendCommand({PR_PLAY, (int)nxt});
+        }else{
+            _stop(true);
+        }
+        return;
     }
     _stop(true);
-    g_eofHandled = false;
     return;
   }
   if(_volTimer){

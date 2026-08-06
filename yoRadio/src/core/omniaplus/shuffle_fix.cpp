@@ -72,34 +72,43 @@ bool omnia_shuffle_is_last(){
 uint16_t omnia_shuffle_next(){
   uint16_t curTotal = config.playlistLength();
   if(curTotal==0) curTotal=1;
-  // Chat13 insurance: sync currentIdx from config.lastStation() in case on_track_change missed
+  // Chat13/14 fix: sync currentIdx directly inside next() for robustness (WebUI/manual + auto-next)
+  // This ensures we always compute next from actual lastStation, not stale pls.currentIdx
   pls.currentIdx = config.lastStation();
+  if(pls.currentIdx == 0) pls.currentIdx = 1;
+  if(pls.currentIdx > pls.total) pls.currentIdx = pls.total;
+
   if(!pls_initialized || !pls.shuffledOrder || curTotal != pls.total){
     omnia_shuffle_init(curTotal);
   }
   if(pls.total==0 || !pls.shuffledOrder) return 0; // 0 means stop
+  uint16_t nxt = 0;
   if(pls.shuffle==SHUFFLE_OFF){
     if(pls.currentIdx < pls.total){
-      return pls.currentIdx+1;
+      nxt = pls.currentIdx+1;
     }else{
       // at end
-      if(pls.repeat==REPEAT_ALL) return 1;
-      if(pls.repeat==REPEAT_ONE) return pls.currentIdx;
-      return 0; // REPEAT_OFF -> stop
+      if(pls.repeat==REPEAT_ALL) nxt = 1;
+      else if(pls.repeat==REPEAT_ONE) nxt = pls.currentIdx;
+      else nxt = 0; // REPEAT_OFF -> stop
     }
   }else{
     if(pls.shuffledPos < pls.total){
-      return pls.shuffledOrder[pls.shuffledPos++];
+      nxt = pls.shuffledOrder[pls.shuffledPos++];
     }else{
       if(pls.repeat==REPEAT_ALL){
         omnia_shuffle_set(SHUFFLE_ON);
-        if(pls.shuffledPos < pls.total) return pls.shuffledOrder[pls.shuffledPos++];
-        else return 0;
-      }
-      if(pls.repeat==REPEAT_ONE) return pls.currentIdx;
-      return 0; // REPEAT_OFF -> stop after shuffled all
+        if(pls.shuffledPos < pls.total) nxt = pls.shuffledOrder[pls.shuffledPos++];
+        else nxt = 0;
+      } else if(pls.repeat==REPEAT_ONE) nxt = pls.currentIdx;
+      else nxt = 0; // REPEAT_OFF -> stop after shuffled all
     }
   }
+  // Chat14: update currentIdx before return when nxt>0, so next call has correct base
+  if(nxt>0){
+    pls.currentIdx = nxt;
+  }
+  return nxt;
 }
 
 uint16_t omnia_shuffle_prev(){
