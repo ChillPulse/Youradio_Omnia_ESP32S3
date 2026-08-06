@@ -747,8 +747,8 @@ private:
     uint32_t  m_m4aBuildNextFrame = 0;
     uint32_t  m_m4aBuildNextSec   = 1;
     uint64_t  m_m4aBuildCumBytes  = 0;
-    uint8_t*  m_m4aSecFrame = nullptr; // actually uint32_t*
-    uint8_t*  m_m4aSecOff = nullptr;
+    uint32_t*  m_m4aSecFrame = nullptr;
+    uint32_t*  m_m4aSecOff = nullptr;
     bool      m_m4aSeekExactNext = false;
     uint32_t  m_saved_mdat_start = 0;
     uint32_t  m_saved_mdat_size = 0;           // in bytes

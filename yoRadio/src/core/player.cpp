@@ -282,6 +282,9 @@ void Player::_play(uint16_t stationId) {
   config.setTitle(config.getMode()==PM_WEB?const_PlConnect:"[next track]");
   config.station.bitrate=0;
   config.setBitrateFormat(BF_UNCNOWN);
+  // Chat13 fix: sync shuffle engine currentIdx on track change, otherwise omnia_shuffle_next() thinks end of playlist -> STOP or loop
+  extern void omnia_shuffle_on_track_change(uint16_t newIdx);
+  omnia_shuffle_on_track_change(stationId);
 	  config.loadStation(stationId);				// ********************************************
   _loadVol(config.store.volume);
   display.putRequest(DBITRATE);

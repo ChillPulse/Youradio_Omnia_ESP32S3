@@ -72,6 +72,8 @@ bool omnia_shuffle_is_last(){
 uint16_t omnia_shuffle_next(){
   uint16_t curTotal = config.playlistLength();
   if(curTotal==0) curTotal=1;
+  // Chat13 insurance: sync currentIdx from config.lastStation() in case on_track_change missed
+  pls.currentIdx = config.lastStation();
   if(!pls_initialized || !pls.shuffledOrder || curTotal != pls.total){
     omnia_shuffle_init(curTotal);
   }

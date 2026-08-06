@@ -995,6 +995,10 @@ bool Audio::connecttoFS(fs::FS& fs, const char* path, int32_t fileStartPos) {
 
     if(!c_path.starts_with("/")) c_path.insert("/", 0);
 
+    // Chat13 point 1: save FS and path for second handle used in M4A index building (avoid tearing main file read)
+    m_localFS = &fs;
+    m_localPath = String(c_path.get());
+
     if(!fs.exists(c_path.get())) {/*AUDIO_LOG_WARN*/AUDIO_ERROR("file not found: %s", c_path.get()); goto exit;}
     AUDIO_INFO("Reading file: \"%s\"", c_path.get());
     m_audiofile = fs.open(c_path.get());
@@ -1532,7 +1536,7 @@ int Audio::read_WAV_Header(uint8_t* data, size_t len) {
         m_controlCounter++;
         size_t cs = *(data + 0) + (*(data + 1) << 8) + (*(data + 2) << 16) + (*(data + 3) << 24); // read chunkSize
         m_rwh.headerSize += 4;
-        if(cs) { m_audioDataSize = cs - 44; }
+        if(cs) { m_audioDataSize = cs; } // FIX Chat13: cs is already PCM data size, don't subtract 44
         else { // sometimes there is nothing here
             m_audioDataSize = m_audioFileSize -m_rwh. headerSize;
         }
@@ -1546,6 +1550,8 @@ int Audio::read_WAV_Header(uint8_t* data, size_t len) {
     }
     m_controlCounter = 100; // header succesfully read
     m_audioDataStart = m_rwh.headerSize;
+    // Chat13 fix: send audio_progress for WAV so WebUI gets sd_min/sd_max immediately, not black
+    if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize);
     return 0;
 }
 //****************************************************************************************

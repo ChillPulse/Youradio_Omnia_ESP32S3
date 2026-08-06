@@ -301,18 +301,33 @@ void NetServer::processQueue(){
       case VOLUME:        sprintf (wsbuf, "{\"payload\":[{\"id\":\"volume\", \"value\": %d}]}", config.store.volume); telnet.printf("##CLI.VOL#: %d\n", config.store.volume); break;
       case NRSSI:         sprintf (wsbuf, "{\"payload\":[{\"id\":\"rssi\", \"value\": %d}]}", rssi); /*rssi = 255;*/ break;
             case SDPOS: {
-          // OMNIA FIX from Chat 6: make SDPOS always valid for UI even when duration is 0
+          // OMNIA FIX + Chat13: use sd_min/sd_max range when valid, not whole fileSize
           uint32_t sdtpos = player.getAudioCurrentTime();
           uint32_t sdtend = player.getAudioFileDuration();
           uint32_t sdpos = player.getFilePos();
-          uint32_t sdend = player.getFileSize();
-          uint32_t bitrate = player.getBitRate();
-          if(sdtend==0 && sdend>0){
-            uint32_t br = bitrate ? bitrate : 128000;
-            sdtend = sdend*8 / br;
+          uint32_t sdmin = player.sd_min;
+          uint32_t sdmax = player.sd_max;
+          uint32_t fileSize = player.getFileSize();
+          uint32_t sdend;
+          if(sdmax==0 || sdmax<=sdmin){
+            // fallback to fileSize if sd range not known yet
+            sdend = fileSize;
+            sdmin = 0;
+          }else{
+            sdend = sdmax;
           }
-          if(sdtpos==0 && sdend>0 && sdpos>0 && sdtend>0){
-            sdtpos = (uint64_t)sdpos * sdtend / sdend;
+          // sdpos already absolute, but ensure it is within [sdmin..sdmax] for UI
+          uint32_t bitrate = player.getBitRate();
+          if(sdtend==0 && sdend>sdmin){
+            uint32_t br = bitrate ? bitrate : 128000;
+            uint32_t range = (sdend > sdmin) ? (sdend - sdmin) : sdend;
+            if(range) sdtend = (uint64_t)range * 8 / br;
+            else if(fileSize) sdtend = (uint64_t)fileSize * 8 / br;
+          }
+          if(sdtpos==0 && sdend>sdmin && sdpos>=sdmin && sdtend>0){
+            uint32_t relPos = (sdpos > sdmin) ? (sdpos - sdmin) : 0;
+            uint32_t range = sdend - sdmin;
+            if(range) sdtpos = (uint64_t)relPos * sdtend / range;
           }
           sprintf (wsbuf, "{\"sdpos\": %d,\"sdend\": %d,\"sdtpos\": %d,\"sdtend\": %d}", 
                           sdpos, sdend, sdtpos, sdtend); 
