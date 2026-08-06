@@ -293,13 +293,13 @@ void Player::_play(uint16_t stationId) {
   if (config.store.smartstart != 2) config.setSmartStart(0);			//*******************************
   bool isConnected = false;
   if(config.getMode()==PM_SDCARD && SDC_CS!=255){
-    isConnected=connecttoFS(sdman,config.station.url,config.sdResumePos==0?_resumeFilePos:config.sdResumePos-player.sd_min);
+    isConnected=connecttoFS(sdman,config.station.url,config.sdResumePos==0?_resumeFilePos:config.sdResumePos);
   }else {
     config.saveValue(&config.store.play_mode, static_cast<uint8_t>(PM_WEB));
   }
   if(config.getMode()==PM_WEB) isConnected=connecttohost(config.station.url);
   if(isConnected){
-  //if (config.store.play_mode==PM_WEB?connecttohost(config.station.url):connecttoFS(SD,config.station.url,config.sdResumePos==0?_resumeFilePos:config.sdResumePos-player.sd_min)) {
+  //if (config.store.play_mode==PM_WEB?connecttohost(config.station.url):connecttoFS(SD,config.station.url,config.sdResumePos==0?_resumeFilePos:config.sdResumePos)) {
     _status = PLAYING;
     if(config.getMode()==PM_SDCARD) {
       config.sdResumePos = 0;
