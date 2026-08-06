@@ -54,7 +54,9 @@ void omnia_seek_absolute(uint32_t ms){
   if(ms>durMs) ms=durMs;
 
   // For M4A, use time->sample->offset via stsz index if available (flagship)
-  if(player.getCodec() == Audio::CODEC_M4A){ // FIX: was 7 which is CODEC_OPUS=7, CODEC_M4A=4
+  // FIX: Audio::CODEC_M4A is private in AudioEx.h, use numeric value 4 (M4A=4, OPUS=7)
+  // Original bug was getCodec()==7 (OPUS) instead of 4 (M4A) -> M4A seek never called
+  if(player.getCodec() == 4){ // CODEC_M4A = 4
     if(player.omnia_m4aSeekMs(ms)){
       Serial.printf("##SEEK#: M4A time seek %lu ms via stsz index\n", (unsigned long)ms);
       return;
