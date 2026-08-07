@@ -7176,7 +7176,8 @@ uint32_t Audio::getHighWatermark(){
 void Audio::omnia_m4aIndexReset(){
   m_m4aIdxValid = false;
   m_m4aSeekExactNext = false;
-  if(m_m4aIdxFile) { m_m4aIdxFile.close(); }
+  if(m_m4aIdxFileBuild) { m_m4aIdxFileBuild.close(); }
+  if(m_m4aIdxFileSeek) { m_m4aIdxFileSeek.close(); }
   m_m4aDurSec = 0;
   m_m4aDurMs = 0;
   m_m4aFramesTotal = 0;
@@ -7215,9 +7216,10 @@ void Audio::omnia_m4aIndexInitIfPossible(){
   if(!m_m4aSecOff || !m_m4aSecFrame){ omnia_m4aIndexReset(); return; }
   memset(m_m4aSecOff, 0, n*sizeof(uint32_t));
   memset(m_m4aSecFrame, 0, n*sizeof(uint32_t));
-  m_m4aIdxFile = m_localFS->open(m_localPath, "r");
-  if(!m_m4aIdxFile){ omnia_m4aIndexReset(); return; }
-  m_m4aIdxFile.seek(m_stsz_position);
+  m_m4aIdxFileBuild = m_localFS->open(m_localPath, "r");
+  if(!m_m4aIdxFileBuild){ omnia_m4aIndexReset(); return; }
+  m_m4aIdxFileBuild.seek(m_stsz_position);
+  m_m4aIdxFileSeek = m_localFS->open(m_localPath, "r"); // optional, may fail - OK per flagship spec
   m_m4aBuildNextFrame = 0;
   m_m4aBuildNextSec = 1;
   m_m4aBuildCumBytes = 0;
@@ -7233,12 +7235,17 @@ static inline uint32_t be32_m4a(const uint8_t* b){
 
 void Audio::omnia_m4aIndexTick(uint16_t maxEntries){
   if(!m_m4aIdxValid) return;
-  if(!m_m4aIdxFile) { m_m4aIdxValid=false; return; }
+  if(!m_m4aIdxFileBuild) { m_m4aIdxValid=false; return; }
+  // Chat17 fix: always force expected position for Build handle (protects against seek shifting it)
+  uint32_t needPos = m_stsz_position + m_m4aBuildNextFrame * 4UL;
+  if(m_m4aIdxFileBuild.position() != needPos){
+    m_m4aIdxFileBuild.seek(needPos, SeekSet);
+  }
   if(m_m4aBuildNextFrame >= m_m4aFramesTotal) return;
   if(InBuff.bufferFilled() < InBuff.getMaxBlockSize() * 8) return;
   uint8_t b[4];
   for(uint16_t i=0; i<maxEntries && m_m4aBuildNextFrame < m_m4aFramesTotal; i++){
-    if(m_m4aIdxFile.read(b,4) != 4){ m_m4aIdxValid=false; break; }
+    if(m_m4aIdxFileBuild.read(b,4) != 4){ m_m4aIdxValid=false; break; }
     m_m4aBuildCumBytes += be32_m4a(b);
     m_m4aBuildNextFrame++;
     while(m_m4aBuildNextSec <= m_m4aDurSec){
@@ -7284,8 +7291,9 @@ bool Audio::omnia_m4aSeekMs(uint32_t ms){
         uint64_t sumInside = 0;
         if(framesInside>0){
           uint32_t stszBase = m_stsz_position + baseFrame*4;
-          if(m_m4aIdxFile){
-            m_m4aIdxFile.seek(stszBase, SeekSet);
+          File* fSeek = m_m4aIdxFileSeek ? &m_m4aIdxFileSeek : (m_m4aIdxFileBuild ? &m_m4aIdxFileBuild : nullptr);
+          if(fSeek){
+            fSeek->seek(stszBase, SeekSet);
             uint8_t buf[64*4];
             uint32_t remaining = framesInside;
             while(remaining>0){
@@ -7293,7 +7301,7 @@ bool Audio::omnia_m4aSeekMs(uint32_t ms){
               uint16_t bytes = chunk*4;
               uint16_t got=0;
               while(got < bytes){
-                int32_t r = m_m4aIdxFile.read(buf+got, bytes-got);
+                int32_t r = fSeek->read(buf+got, bytes-got);
                 if(r<=0){ vTaskDelay(1); continue; }
                 got+=r;
               }
@@ -7373,7 +7381,8 @@ bool Audio::omnia_m4aSeekMs(uint32_t ms){
 // ===== OMNIA AAC ADTS index implementation (flagship) =====
 void Audio::omnia_aacIndexReset(){
   m_aacIdxValid = false;
-  if(m_aacIdxFile) { m_aacIdxFile.close(); }
+  if(m_aacIdxFileBuild) { m_aacIdxFileBuild.close(); }
+  if(m_aacIdxFileSeek) { m_aacIdxFileSeek.close(); }
   m_aacDurSec = 0;
   m_aacDurMs = 0;
   m_aacSampleRate = 0;
@@ -7410,26 +7419,27 @@ void Audio::omnia_aacIndexInitIfPossible(){
   omnia_aacIndexReset();
 
   // Open second handle for scanning ADTS
-  m_aacIdxFile = m_localFS->open(m_localPath, "r");
-  if(!m_aacIdxFile){ AUDIO_ERROR("aacIndex: failed open second handle"); return; }
+  m_aacIdxFileBuild = m_localFS->open(m_localPath, "r");
+  if(!m_aacIdxFileBuild){ AUDIO_ERROR("aacIndex: failed open build"); return; }
+  m_aacIdxFileSeek = m_localFS->open(m_localPath, "r"); // optional
 
   // Try to get sampleRate from first ADTS header
   uint8_t hdr[10];
-  m_aacIdxFile.seek(0, SeekSet);
-  if(m_aacIdxFile.read(hdr, 7) != 7){ m_aacIdxFile.close(); return; }
+  m_aacIdxFileBuild.seek(0, SeekSet);
+  if(m_aacIdxFileBuild.read(hdr, 7) != 7){ m_aacIdxFileBuild.close(); return; }
   uint32_t fl, sr, smp;
   if(!adtsParseHeader(hdr, fl, sr, smp)){
     // Maybe file has ID3 at beginning? Try to skip ID3v2
     // For simplicity, search for sync in first 4K
-    m_aacIdxFile.seek(0, SeekSet);
+    m_aacIdxFileBuild.seek(0, SeekSet);
     uint8_t buf[4096];
-    int rd = m_aacIdxFile.read(buf, 4096);
+    int rd = m_aacIdxFileBuild.read(buf, 4096);
     int off=-1;
     for(int i=0;i<rd-7;i++) if(buf[i]==0xFF && (buf[i+1]&0xF0)==0xF0){ off=i; break; }
     if(off>=0){
-      if(!adtsParseHeader(buf+off, fl, sr, smp)){ m_aacIdxFile.close(); return; }
+      if(!adtsParseHeader(buf+off, fl, sr, smp)){ m_aacIdxFileBuild.close(); return; }
       m_aacBuildPos = off;
-    } else { m_aacIdxFile.close(); return; }
+    } else { m_aacIdxFileBuild.close(); return; }
   } else {
     m_aacBuildPos = 0;
   }
@@ -7449,13 +7459,13 @@ void Audio::omnia_aacIndexInitIfPossible(){
   } else {
     m_aacSecOff = (uint32_t*) malloc(need);
   }
-  if(!m_aacSecOff){ m_aacIdxFile.close(); return; }
+  if(!m_aacSecOff){ m_aacIdxFileBuild.close(); return; }
   memset(m_aacSecOff, 0, need);
   m_aacSecOff[0]=0;
   m_aacBuildNextSec = 1;
   m_aacBuildCumBytes = 0;
   m_aacBuildCumSamples = 0;
-  m_aacIdxFile.seek(m_aacBuildPos, SeekSet);
+  m_aacIdxFileBuild.seek(m_aacBuildPos, SeekSet);
   m_aacIdxValid = true;
   // Duration will be refined after full scan, for now 0
   AUDIO_INFO("aacIndexInit fileSize=%lu sr=%lu estSec=%lu PSRAM=%d", (unsigned long)m_audioFileSize, (unsigned long)sr, (unsigned long)estSec, psramFound());
@@ -7463,28 +7473,32 @@ void Audio::omnia_aacIndexInitIfPossible(){
 
 void Audio::omnia_aacIndexTick(uint16_t maxFrames){
   if(!m_aacIdxValid) return;
-  if(!m_aacIdxFile) { m_aacIdxValid=false; return; }
+  if(!m_aacIdxFileBuild) { m_aacIdxValid=false; return; }
+  // Chat17 fix: always force expected position for Build handle
+  if(m_aacIdxFileBuild.position() != m_aacBuildPos){
+    m_aacIdxFileBuild.seek(m_aacBuildPos, SeekSet);
+  }
   if(InBuff.bufferFilled() < InBuff.getMaxBlockSize() * 4) return; // avoid SD contention
 
   uint8_t hdr[10];
   uint32_t frames=0;
   for(uint16_t i=0;i<maxFrames;i++){
-    uint32_t pos = m_aacIdxFile.position();
-    if(m_aacIdxFile.read(hdr, 7) != 7) break;
+    uint32_t pos = m_aacIdxFileBuild.position();
+    if(m_aacIdxFileBuild.read(hdr, 7) != 7) break;
     uint32_t fl, sr, smp;
     if(!adtsParseHeader(hdr, fl, sr, smp)){
       // try resync: search next 0xFF
       // simple: move back 6 bytes and scan forward 1 byte at a time up to 1024
       bool found=false;
       for(int k=0;k<1024;k++){
-        m_aacIdxFile.seek(pos+1+k, SeekSet);
-        if(m_aacIdxFile.read(hdr, 7)!=7) break;
+        m_aacIdxFileBuild.seek(pos+1+k, SeekSet);
+        if(m_aacIdxFileBuild.read(hdr, 7)!=7) break;
         if(adtsParseHeader(hdr, fl, sr, smp)){ found=true; m_aacBuildPos = pos+1+k; break; }
       }
       if(!found) break;
       // re-read at new pos
-      m_aacIdxFile.seek(m_aacBuildPos, SeekSet);
-      if(m_aacIdxFile.read(hdr,7)!=7) break;
+      m_aacIdxFileBuild.seek(m_aacBuildPos, SeekSet);
+      if(m_aacIdxFileBuild.read(hdr,7)!=7) break;
       if(!adtsParseHeader(hdr, fl, sr, smp)) break;
     }
     // Valid ADTS frame
@@ -7494,7 +7508,7 @@ void Audio::omnia_aacIndexTick(uint16_t maxFrames){
     m_aacBuildPos += fl;
     // Seek to next frame (already consumed 7 bytes, need to skip rest)
     if(fl > 7){
-      m_aacIdxFile.seek(m_aacBuildPos, SeekSet);
+      m_aacIdxFileBuild.seek(m_aacBuildPos, SeekSet);
     }
     frames++;
     // Check second boundary
@@ -7508,7 +7522,7 @@ void Audio::omnia_aacIndexTick(uint16_t maxFrames){
       }
       m_aacBuildNextSec++;
     }
-    if(m_aacIdxFile.position() >= m_audioFileSize) break;
+    if(m_aacIdxFileBuild.position() >= m_audioFileSize) break;
   }
 
   // Update duration estimate
@@ -7551,7 +7565,7 @@ bool Audio::omnia_aacSeekMs(uint32_t ms){
       uint32_t pos = audioStart + baseOff;
       // Now scan forward from baseOff parsing ADTS until we reach target ms
       // Use second file if available
-      File *f = m_aacIdxFile ? &m_aacIdxFile : nullptr;
+      File *f = m_aacIdxFileSeek ? &m_aacIdxFileSeek : (m_aacIdxFileBuild ? &m_aacIdxFileBuild : nullptr);
       uint32_t curPos = baseOff;
       uint64_t curSamples = (uint64_t)sec * m_aacSampleRate; // approximate, because sec boundary was based on samples
       // Actually our secOff was saved when cumSamples crossed sec*sr, so base should correspond to sec*sr samples

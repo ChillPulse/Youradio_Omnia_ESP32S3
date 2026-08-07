@@ -744,7 +744,8 @@ private:
     // ===== OMNIA: M4A seek index (RAM) =====
     fs::FS*   m_localFS = nullptr;
     String    m_localPath;
-    File      m_m4aIdxFile;
+    File      m_m4aIdxFileBuild;
+    File      m_m4aIdxFileSeek;
     bool      m_m4aIdxValid = false;
     uint32_t  m_m4aDurSec = 0;
     uint32_t  m_m4aDurMs  = 0;
@@ -756,7 +757,8 @@ private:
     uint32_t*  m_m4aSecOff = nullptr;
     bool      m_m4aSeekExactNext = false;
     // OMNIA AAC ADTS index
-    File      m_aacIdxFile;
+    File      m_aacIdxFileBuild;
+    File      m_aacIdxFileSeek;
     bool      m_aacIdxValid = false;
     uint32_t  m_aacDurSec = 0;
     uint32_t  m_aacDurMs = 0;
