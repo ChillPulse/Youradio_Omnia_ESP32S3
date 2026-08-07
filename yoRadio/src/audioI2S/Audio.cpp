@@ -7390,6 +7390,7 @@ void Audio::omnia_aacIndexReset(){
   m_aacBuildCumBytes = 0;
   m_aacBuildCumSamples = 0;
   m_aacBuildPos = 0;
+  m_aacFirstFramePos = 0;
   m_aacSecCap = 0;
   if(m_aacSecOff){ free(m_aacSecOff); m_aacSecOff=nullptr; }
 }
@@ -7445,6 +7446,12 @@ void Audio::omnia_aacIndexInitIfPossible(){
     m_aacBuildPos = 0;
   }
   m_aacSampleRate = sr;
+  m_aacFirstFramePos = m_aacBuildPos;
+  // сделаем AAC по-взрослому как реальный аудиодиапазон:
+  m_audioDataStart = m_aacFirstFramePos;
+  m_audioDataSize = (m_audioFileSize > m_audioDataStart) ? (m_audioFileSize - m_audioDataStart) : 0;
+  // обновим SDLEN в WebUI (иначе шкала будет считать ID3 частью аудио)
+  if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize);
 
   // Estimate duration from fileSize / average bitrate? Better build index first to get exact duration.
   // For now, allocate sec array based on fileSize / 16000 bytes per sec approx (128k ~16KB/s) -> overallocate
@@ -7462,7 +7469,7 @@ void Audio::omnia_aacIndexInitIfPossible(){
   }
   if(!m_aacSecOff){ m_aacIdxFileBuild.close(); return; }
   memset(m_aacSecOff, 0, need);
-  m_aacSecOff[0]=0;
+  m_aacSecOff[0] = m_aacFirstFramePos; // абсолютная позиция per Chat20
   m_aacSecCap = estSec;
   m_aacBuildNextSec = 1;
   m_aacBuildCumBytes = 0;
@@ -7518,7 +7525,7 @@ void Audio::omnia_aacIndexTick(uint16_t maxFrames){
     uint32_t curSec = curMs / 1000;
     while(m_aacBuildNextSec <= curSec && m_aacBuildNextSec <= m_aacSecCap){
       if(m_aacSecOff){
-        m_aacSecOff[m_aacBuildNextSec] = (uint32_t)m_aacBuildCumBytes;
+        m_aacSecOff[m_aacBuildNextSec] = m_aacBuildPos; // абсолютная позиция в файле (указатель на следующий кадр) per Chat20
       }
       m_aacBuildNextSec++;
     }
@@ -7549,32 +7556,22 @@ bool Audio::omnia_aacSeekMs(uint32_t ms){
   uint32_t audioSize = m_audioDataSize ? m_audioDataSize : m_audioFileSize;
   uint32_t endPos = audioStart + audioSize;
 
-  // Fast path via sec index if built
+  // Fast path via sec index if built - per Chat20 flagship: secOff now absolute file offsets, not cumulative bytes
   if(m_aacSecOff && m_aacDurSec>0){
     uint32_t sec = ms / 1000;
     if(sec > m_aacDurSec) sec = m_aacDurSec;
     if(sec < m_aacBuildNextSec){
-      uint32_t baseOff = m_aacSecOff[sec];
-      // Need to sum inside sec: from sec offset to target ms
-      // For simplicity, we have only secOff, not per-frame inside sec. So we need to scan few frames from baseOff.
-      // We'll open second handle or use main file seek to baseOff and parse ADTS few frames.
-      uint64_t targetSamples = (uint64_t)ms * m_aacSampleRate / 1000ULL;
-      uint64_t baseSamples = (uint64_t)sec * m_aacSampleRate; // approx, but we have accurate cumSamples? We stored only cumBytes, need cumSamples for base?
-      // For simplicity, use baseOff as start and scan ADTS frames until we reach targetSamples
-      // We have m_aacBuildCumSamples up to build point, but for seek we need to scan from baseOff
-      uint32_t pos = audioStart + baseOff;
-      // Now scan forward from baseOff parsing ADTS until we reach target ms
-      // Use second file if available
+      uint32_t start = m_audioDataStart;
+      uint32_t endPos = start + (m_audioDataSize ? m_audioDataSize : m_audioFileSize);
+      uint32_t basePos = m_aacSecOff[sec]; // ABS per Chat20
+      if(basePos < start) basePos = start;
+      if(basePos >= endPos) basePos = endPos - 1;
       File *f = m_aacIdxFileSeek ? &m_aacIdxFileSeek : (m_aacIdxFileBuild ? &m_aacIdxFileBuild : nullptr);
-      uint32_t curPos = baseOff;
-      uint64_t curSamples = (uint64_t)sec * m_aacSampleRate; // approximate, because sec boundary was based on samples
-      // Actually our secOff was saved when cumSamples crossed sec*sr, so base should correspond to sec*sr samples
-      // So we can iterate
-      if(f){
-        f->seek(curPos, SeekSet);
-      } else {
-        if(audioFileSeek(curPos)!=0) return false;
-      }
+      uint32_t curPos = basePos;
+      if(f) f->seek(curPos, SeekSet);
+      else { if(audioFileSeek(curPos)!=0) return false; }
+      uint64_t targetSamples = (uint64_t)ms * m_aacSampleRate / 1000ULL;
+      uint64_t curSamples = (uint64_t)sec * m_aacSampleRate;
       uint8_t hdr[10];
       while(curSamples < targetSamples){
         int rd = f ? f->read(hdr,7) : audioFileRead(hdr,7);
@@ -7583,21 +7580,15 @@ bool Audio::omnia_aacSeekMs(uint32_t ms){
         if(!adtsParseHeader(hdr, fl, sr, smp)) break;
         curSamples += smp;
         curPos += fl;
-        if(f) {
-          // already advanced by read, need to skip rest of frame
+        if(f){
           if(fl>7) f->seek(curPos, SeekSet);
         } else {
-          if(fl>7) {
-            // skip rest
-            // we already read 7, need to skip fl-7
-            // audioFileSeek does absolute, so seek to curPos
-            audioFileSeek(curPos);
-          }
+          if(fl>7) audioFileSeek(curPos);
         }
         if(curSamples >= targetSamples) break;
       }
       if(curPos >= endPos) curPos = endPos - 1;
-      AUDIO_INFO("aacSeekMs FAST sec=%lu baseOff=%lu curPos=%lu targetMs=%lu (sec %lu)", (unsigned long)sec, (unsigned long)baseOff, (unsigned long)curPos, (unsigned long)ms, (unsigned long)sec);
+      AUDIO_INFO("aacSeekMs FAST sec=%lu basePos=%lu curPos=%lu targetMs=%lu", (unsigned long)sec, (unsigned long)basePos, (unsigned long)curPos, (unsigned long)ms);
       return setFilePos(curPos);
     }
   }
