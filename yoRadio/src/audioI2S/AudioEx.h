@@ -767,6 +767,7 @@ private:
     uint64_t  m_aacBuildCumBytes = 0;
     uint64_t  m_aacBuildCumSamples = 0;
     uint32_t  m_aacBuildPos = 0; // absolute file pos for ADTS
+    uint32_t  m_aacSecCap = 0;
     uint32_t* m_aacSecOff = nullptr;
     uint32_t  m_saved_mdat_start = 0;
     uint32_t  m_saved_mdat_size = 0;           // in bytes

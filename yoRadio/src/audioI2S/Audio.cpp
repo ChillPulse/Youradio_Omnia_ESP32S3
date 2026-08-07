@@ -7390,6 +7390,7 @@ void Audio::omnia_aacIndexReset(){
   m_aacBuildCumBytes = 0;
   m_aacBuildCumSamples = 0;
   m_aacBuildPos = 0;
+  m_aacSecCap = 0;
   if(m_aacSecOff){ free(m_aacSecOff); m_aacSecOff=nullptr; }
 }
 
@@ -7462,13 +7463,14 @@ void Audio::omnia_aacIndexInitIfPossible(){
   if(!m_aacSecOff){ m_aacIdxFileBuild.close(); return; }
   memset(m_aacSecOff, 0, need);
   m_aacSecOff[0]=0;
+  m_aacSecCap = estSec;
   m_aacBuildNextSec = 1;
   m_aacBuildCumBytes = 0;
   m_aacBuildCumSamples = 0;
   m_aacIdxFileBuild.seek(m_aacBuildPos, SeekSet);
   m_aacIdxValid = true;
   // Duration will be refined after full scan, for now 0
-  AUDIO_INFO("aacIndexInit fileSize=%lu sr=%lu estSec=%lu PSRAM=%d", (unsigned long)m_audioFileSize, (unsigned long)sr, (unsigned long)estSec, psramFound());
+  AUDIO_INFO("aacIndexInit fileSize=%lu sr=%lu estSec=%lu cap=%lu PSRAM=%d", (unsigned long)m_audioFileSize, (unsigned long)sr, (unsigned long)estSec, (unsigned long)m_aacSecCap, psramFound());
 }
 
 void Audio::omnia_aacIndexTick(uint16_t maxFrames){
@@ -7511,13 +7513,11 @@ void Audio::omnia_aacIndexTick(uint16_t maxFrames){
       m_aacIdxFileBuild.seek(m_aacBuildPos, SeekSet);
     }
     frames++;
-    // Check second boundary
+    // Check second boundary - use m_aacSecCap not hardcoded 10000 to avoid heap corruption
     uint64_t curMs = m_aacBuildCumSamples * 1000ULL / m_aacSampleRate;
     uint32_t curSec = curMs / 1000;
-    while(m_aacBuildNextSec <= curSec && m_aacBuildNextSec < 10000){
-      // Ensure array large enough
-      // For simplicity we allocated estSec, if we exceed, stop building sec index (still have offset for seek via linear scan fallback)
-      if(m_aacBuildNextSec < 10000 && m_aacSecOff){
+    while(m_aacBuildNextSec <= curSec && m_aacBuildNextSec <= m_aacSecCap){
+      if(m_aacSecOff){
         m_aacSecOff[m_aacBuildNextSec] = (uint32_t)m_aacBuildCumBytes;
       }
       m_aacBuildNextSec++;
