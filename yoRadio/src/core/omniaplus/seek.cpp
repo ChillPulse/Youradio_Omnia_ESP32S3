@@ -64,6 +64,14 @@ void omnia_seek_absolute(uint32_t ms){
     // If index not ready, fall back to byte proportional within audio range
   }
 
+  // Chat16 Step4: AAC ADTS flagship seek via index
+  if(player.getCodec() == 3){ // CODEC_AAC = 3
+    if(player.omnia_aacSeekMs(ms)){
+      Serial.printf("##SEEK#: AAC time seek %lu ms via ADTS index\n", (unsigned long)ms);
+      return;
+    }
+  }
+
   uint32_t start = player.sd_min;
   uint32_t end = player.sd_max;
   if(end<=start){

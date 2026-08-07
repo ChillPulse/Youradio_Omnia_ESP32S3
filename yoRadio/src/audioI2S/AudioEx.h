@@ -199,6 +199,11 @@ class Audio{
     void omnia_m4aIndexInitIfPossible();
     void omnia_m4aIndexTick(uint16_t maxEntries = 256);
     bool omnia_m4aSeekMs(uint32_t ms);
+    // OMNIA AAC ADTS index (flagship)
+    void omnia_aacIndexReset();
+    void omnia_aacIndexInitIfPossible();
+    void omnia_aacIndexTick(uint16_t maxFrames = 128);
+    bool omnia_aacSeekMs(uint32_t ms);
     void         setI2SCommFMT_LSB(bool commFMT);
     int          getCodec() { return m_codec; }
     const char*  getCodecname() { return codecname[m_codec]; }
@@ -750,6 +755,17 @@ private:
     uint32_t*  m_m4aSecFrame = nullptr;
     uint32_t*  m_m4aSecOff = nullptr;
     bool      m_m4aSeekExactNext = false;
+    // OMNIA AAC ADTS index
+    File      m_aacIdxFile;
+    bool      m_aacIdxValid = false;
+    uint32_t  m_aacDurSec = 0;
+    uint32_t  m_aacDurMs = 0;
+    uint32_t  m_aacSampleRate = 0;
+    uint32_t  m_aacBuildNextSec = 1;
+    uint64_t  m_aacBuildCumBytes = 0;
+    uint64_t  m_aacBuildCumSamples = 0;
+    uint32_t  m_aacBuildPos = 0; // absolute file pos for ADTS
+    uint32_t* m_aacSecOff = nullptr;
     uint32_t  m_saved_mdat_start = 0;
     uint32_t  m_saved_mdat_size = 0;           // in bytes
     size_t          m_audioDataSize = 0;            //

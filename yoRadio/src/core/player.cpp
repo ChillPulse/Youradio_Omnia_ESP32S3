@@ -222,6 +222,13 @@ void Player::loop() {
   syncRateToStmPins();
   omnia_progress_loop();
   omnia_usb_host_loop();
+  // Chat16 Step3: build indexes in background when buffer is full (no stutter)
+  if(config.getMode() == PM_SDCARD){
+    if(inBufferFilled() > 32000){ // buffer full -> safe to touch SD
+      if(getCodec() == 4) omnia_m4aIndexTick(512); // M4A
+      if(getCodec() == 3) omnia_aacIndexTick(64); // AAC ADTS
+    }
+  }
   // Chat14: fix fallback STOP when EOF already handled
   if(!isRunning() && _status==PLAYING){
     extern volatile uint32_t g_lastEofMs;
