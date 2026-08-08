@@ -5642,7 +5642,7 @@ void Audio::calculateAudioTime(uint16_t bytesDecoderIn, uint16_t bytesDecoderOut
         uint32_t offset = (curFilePos > m_audioDataStart) ? (curFilePos - m_audioDataStart) : 0;
 
         if(m_codec==CODEC_M4A && m_m4aSecOff && m_m4aDurSec>0 && m_m4aBuildNextSec>1){
-            // binary search secOff for offset
+            // binary search secOff for offset - per Chat24 removed hi>10000 limit (breaks long tracks >2:46:40)
             uint32_t lo=0, hi=m_m4aBuildNextSec-1, sec=0;
             while(lo<=hi){
                 uint32_t mid = (lo+hi)/2;
@@ -5654,7 +5654,6 @@ void Audio::calculateAudioTime(uint16_t bytesDecoderIn, uint16_t bytesDecoderOut
                     hi = mid-1;
                 }
                 if(lo==0) break; // safety
-                if(hi>10000) break;
                 if(lo>hi) break;
             }
             if(sec <= m_m4aDurSec){
@@ -5686,7 +5685,6 @@ void Audio::calculateAudioTime(uint16_t bytesDecoderIn, uint16_t bytesDecoderOut
                     hi = mid-1;
                 }
                 if(lo==0) break;
-                if(hi>10000) break;
                 if(lo>hi) break;
             }
             if(sec <= m_aacDurSec){
@@ -7210,6 +7208,10 @@ void Audio::omnia_m4aIndexInitIfPossible(){
   m_m4aDurMs = m_audioFileDuration * 1000UL;
   m_m4aFramesTotal = m_stsz_numEntries;
   if(m_m4aDurSec==0) return;
+  // Chat24: ensure bitrate non-zero when duration derived from stsz, so getAudioFileDuration() returns exact (not 0) and WebUI gets exact sdtend
+  if(m_nominal_bitrate == 0 && m_audioFileDuration > 0 && m_audioDataSize > 0){
+    m_nominal_bitrate = (uint64_t)m_audioDataSize * 8ULL / m_audioFileDuration;
+  }
   uint32_t n = m_m4aDurSec + 1;
   if(psramFound()){
     m_m4aSecOff = (uint32_t*) ps_malloc(n * sizeof(uint32_t));
