@@ -1394,12 +1394,16 @@ size_t Audio::readAudioHeader(uint32_t bytes) {
         }
     }
     if(m_codec == CODEC_AAC) {
-        // localfile AAC/ADTS: treat whole file as audio block
+        // localfile AAC/ADTS: treat whole file as audio block, but first try to find real first frame (ID3 may be at beginning)
         m_audioDataStart = 0;
         m_audioDataSize = m_audioFileSize;
-        if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize); // <-- ВАЖНО per Chat15 Step1
-        // Chat16 Step2.2: init AAC index after range known
+        // Chat16 Step2.2 + Chat21 polishing: first init index (finds firstFramePos and updates audioDataStart/size + sends audio_progress once)
+        // This avoids double audio_progress and UI flicker (was 0..fileSize then firstFramePos..size)
         omnia_aacIndexInitIfPossible();
+        // If init failed or didn't find ID3 (firstFramePos==0), ensure at least one progress is sent
+        if(!m_aacIdxValid){
+            if(audio_progress) audio_progress(m_audioDataStart, m_audioDataStart + m_audioDataSize);
+        }
         m_controlCounter = 100;
     }
     if(m_codec == CODEC_FLAC) {
