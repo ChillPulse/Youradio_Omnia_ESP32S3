@@ -5674,10 +5674,11 @@ void Audio::calculateAudioTime(uint16_t bytesDecoderIn, uint16_t bytesDecoderOut
             }
         }
         if(m_codec==CODEC_AAC && m_aacSecOff && m_aacDurSec>0 && m_aacBuildNextSec>1){
+            uint32_t absPos = curFilePos; // <-- ВАЖНО per Chat22: ABS, т.к. secOff теперь абсолютные
             uint32_t lo=0, hi=m_aacBuildNextSec-1, sec=0;
             while(lo<=hi){
                 uint32_t mid = (lo+hi)/2;
-                if(m_aacSecOff[mid] <= offset){
+                if(m_aacSecOff[mid] <= absPos){
                     sec = mid;
                     lo = mid+1;
                 } else {
@@ -7396,6 +7397,7 @@ void Audio::omnia_aacIndexReset(){
   m_aacBuildPos = 0;
   m_aacFirstFramePos = 0;
   m_aacSecCap = 0;
+  m_aacDurFinalized = false;
   if(m_aacSecOff){ free(m_aacSecOff); m_aacSecOff=nullptr; }
 }
 
@@ -7541,6 +7543,16 @@ void Audio::omnia_aacIndexTick(uint16_t maxFrames){
     uint64_t durMs = m_aacBuildCumSamples * 1000ULL / m_aacSampleRate;
     m_aacDurMs = durMs;
     m_aacDurSec = durMs / 1000;
+  }
+
+  // Chat22: finalize exact duration + bitrate once when we reached EOF, so getAudioFileDuration() returns exact and WebUI gets correct sdtend
+  if(!m_aacDurFinalized && m_aacBuildPos + 8 >= m_audioFileSize && m_aacDurSec > 0){
+    m_aacDurFinalized = true;
+    m_audioFileDuration = m_aacDurSec;
+    if(m_audioDataSize && m_audioFileDuration){
+      m_nominal_bitrate = (uint64_t)m_audioDataSize * 8ULL / m_audioFileDuration;
+    }
+    AUDIO_INFO("aacIndex finalized: dur=%lus br=%lu", (unsigned long)m_audioFileDuration, (unsigned long)m_nominal_bitrate);
   }
 }
 

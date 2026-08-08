@@ -769,6 +769,7 @@ private:
     uint32_t  m_aacBuildPos = 0; // absolute file pos for ADTS
     uint32_t  m_aacFirstFramePos = 0; // absolute position of first ADTS frame in file
     uint32_t  m_aacSecCap = 0;
+    bool      m_aacDurFinalized = false;
     uint32_t* m_aacSecOff = nullptr;
     uint32_t  m_saved_mdat_start = 0;
     uint32_t  m_saved_mdat_size = 0;           // in bytes
