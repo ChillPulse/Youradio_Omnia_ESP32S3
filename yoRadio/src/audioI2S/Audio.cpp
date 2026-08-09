@@ -4423,9 +4423,18 @@ void Audio::playAudioData() {
             m_pad.oldAudioDataSize = m_audioDataSize;
         }
 
-        m_pad.bytesToDecode = min(m_audioFileSize - m_audioFilePosition + InBuff.bufferFilled(), InBuff.getMaxBlockSize());
+        // Chat26 Fix #1: use logical end of audio block, not fileSize, for non-progressive M4A where mdat ends before moov
+        uint32_t logicalEnd = m_audioFileSize;
+        if(m_audioDataSize){
+            uint32_t endAB = m_audioDataStart + m_audioDataSize;
+            // если audiodata короче файла — используем конец аудиоблока
+            if(endAB > m_audioDataStart && endAB < logicalEnd) logicalEnd = endAB;
+        }
+        uint32_t remaining = (m_audioFilePosition < logicalEnd) ? (logicalEnd - m_audioFilePosition) : 0;
 
-        if(m_audioFileSize - m_audioFilePosition == 0) m_f_allDataReceived = true;
+        m_pad.bytesToDecode = min(remaining + InBuff.bufferFilled(), InBuff.getMaxBlockSize());
+
+        if(remaining == 0) m_f_allDataReceived = true;
         if(m_f_allDataReceived && InBuff.bufferFilled() < InBuff.getMaxBlockSize()){ // last frames to decode
             m_pad.lastFrames = true;
         }

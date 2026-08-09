@@ -277,6 +277,12 @@ void Player::setOutputPins(bool isPlaying) {
 }
 
 void Player::_play(uint16_t stationId) {
+  // Chat26 Fix #2: reset EOF flag at start of each track, otherwise loop() may think EOF already handled and go to STOP
+  extern volatile uint32_t g_lastEofMs;
+  extern volatile bool g_eofHandled;
+  g_eofHandled = false;
+  g_lastEofMs = 0;
+
   log_i("%s called, stationId=%d", __func__, stationId);
   setError("");
   remoteStationName = false;
