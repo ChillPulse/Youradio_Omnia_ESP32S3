@@ -222,6 +222,7 @@ void Player::loop() {
   syncRateToStmPins();
   omnia_progress_loop();
   omnia_usb_host_loop();
+  omnia_seek_loop(); // Chat25: must be called for hold acceleration to work (seek_start +/-)
   // Chat16 Step3: build indexes in background when buffer is full (no stutter)
   if(config.getMode() == PM_SDCARD){
     if(inBufferFilled() > 32000){ // buffer full -> safe to touch SD

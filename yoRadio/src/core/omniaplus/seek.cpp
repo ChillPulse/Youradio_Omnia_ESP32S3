@@ -147,3 +147,19 @@ void omnia_seek_stop(){
   seekingActive=false;
   Serial.println("##SEEK#: stop");
 }
+
+void omnia_seek_loop(){
+  if(!seekingActive) return;
+  // Avoid spamming seek too fast - seek every 400ms while holding
+  static uint32_t lastTick = 0;
+  uint32_t now = millis();
+  if(now - lastTick < 400) return;
+  lastTick = now;
+
+  uint32_t holdMs = now - seekHoldStartMs;
+  int32_t step = omnia_seek_accelerated_step(holdMs);
+  if(!seekDirForward) step = -step;
+  // Chat25 example: first <2s 5s, 2-4s 10s, 4-7s 30s, >7s 60s
+  Serial.printf("##SEEK#: hold %lu ms dir %s step %+ld ms (accel)\n", (unsigned long)holdMs, seekDirForward?"+":"-", (long)step);
+  omnia_seek_relative(step);
+}

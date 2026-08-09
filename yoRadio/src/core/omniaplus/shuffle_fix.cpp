@@ -71,6 +71,7 @@ bool omnia_shuffle_is_last(){
 
 uint16_t omnia_shuffle_next(){
   uint16_t curTotal = config.playlistLength();
+  if(curTotal==0) curTotal = pls.total; // Chat25: if couldn't open index due to file limit, don't ruin total
   if(curTotal==0) curTotal=1;
   // Chat13/14 fix: sync currentIdx directly inside next() for robustness (WebUI/manual + auto-next)
   // This ensures we always compute next from actual lastStation, not stale pls.currentIdx
@@ -113,6 +114,7 @@ uint16_t omnia_shuffle_next(){
 
 uint16_t omnia_shuffle_prev(){
   uint16_t curTotal = config.playlistLength();
+  if(curTotal==0) curTotal = pls.total; // Chat25: don't ruin total if temporary open fail
   if(curTotal==0) curTotal=1;
   if(!pls_initialized || !pls.shuffledOrder || curTotal != pls.total){
     omnia_shuffle_init(curTotal);

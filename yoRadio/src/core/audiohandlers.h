@@ -165,6 +165,9 @@ static void onAudioEofCommon(const char *info){
     g_lastEofMs = millis();
     g_eofHandled = true;
     config.sdResumePos = 0; // FIX: reset resume pos on track end, otherwise next track starts from end and instantly closes (seen in Log14 for AAC)
+    // Chat25 fix: free index file handles before playlistLength() to avoid open file limit -> playlistLength() returns 0 -> STOP
+    player.omnia_m4aIndexReset();
+    player.omnia_aacIndexReset();
     // auto-next only for local sources (SD/USB), not WEB radio
     if(config.getMode()!=0){
         extern uint16_t omnia_shuffle_next();
