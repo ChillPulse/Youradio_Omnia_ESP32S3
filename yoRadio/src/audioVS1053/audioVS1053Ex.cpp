@@ -4388,7 +4388,8 @@ void Audio::playAudioData() {
     if(!m_f_stream || m_f_eof || m_f_lockInBuffer || !m_f_running){m_validSamples = 0; return;} // guard, stream not ready or eof reached or InBuff is locked or not running
 //    if(m_validSamples) {playChunk();                               return;} // guard, play samples first
     //--------------------------------------------------------------------------------
-    // do NOT reset m_pad.count here; it must accumulate to reach the "30 tries" EOF fallback
+    // IMPORTANT: do not reset count here; it must accumulate to reach the EOF fallback
+    // m_pad.count = 0;
     m_pad.lastFrames = false;
     m_pad.bytesToDecode = InBuff.bufferFilled();
     m_pad.bytesDecoded = 0;

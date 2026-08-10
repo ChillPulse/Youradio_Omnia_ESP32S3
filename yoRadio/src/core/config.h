@@ -244,8 +244,8 @@ class Config {
     void bootInfo();
     void doSleepW();
     void setSnuffle(bool sn);
-    uint8_t getSdRepeat();
-    void setSdRepeat(uint8_t r); // 0=OFF, 1=ONE, 2=ALL
+    uint8_t getSdRepeat(); // 0=OFF,1=ONE,2=ALL (store._reserved bits 0..1)
+    void setSdRepeat(uint8_t); // persist + apply
     uint8_t getMode() { return store.play_mode/* & 0b11*/; }
     void initPlaylistMode();
     void reset();
