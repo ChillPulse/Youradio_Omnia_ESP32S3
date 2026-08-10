@@ -66,17 +66,17 @@ bool omnia_cli_handle(const char* line){
   // Repeat
   if(strncmp(cmd,"repeat",6)==0){
     if(strstr(cmd,"off")){
-      omnia_shuffle_set_repeat(REPEAT_OFF);
+      config.setSdRepeat(0);
       Serial.println("##REPEAT#: OFF — stop at end of list");
       return true;
     }
     if(strstr(cmd,"one")){
-      omnia_shuffle_set_repeat(REPEAT_ONE);
+      config.setSdRepeat(1);
       Serial.println("##REPEAT#: ONE — repeat current track");
       return true;
     }
     if(strstr(cmd,"all")){
-      omnia_shuffle_set_repeat(REPEAT_ALL);
+      config.setSdRepeat(2);
       Serial.println("##REPEAT#: ALL — loop playlist");
       return true;
     }

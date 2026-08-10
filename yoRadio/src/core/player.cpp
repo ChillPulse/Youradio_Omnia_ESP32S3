@@ -244,6 +244,12 @@ void Player::loop() {
             return;
         }
         // EOF not yet handled - this is fallback for crash/error where eof callback didn't come
+        if(omnia_shuffle_get_repeat() == REPEAT_ONE){
+            uint16_t cur = config.lastStation();
+            config.setLastStation(cur);
+            sendCommand({PR_PLAY, (int)cur});
+            return;
+        }
         extern uint16_t omnia_shuffle_next();
         uint16_t nxt = omnia_shuffle_next();
         if(nxt>0){

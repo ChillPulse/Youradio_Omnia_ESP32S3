@@ -241,6 +241,12 @@ void Config::initPlaylistMode(){
     _lastStation = getMode()==PM_WEB?1:_randomStation();
   }
   lastStation(_lastStation);
+  // Chat29: restore play-modes (shuffle + repeat) after reboot
+  omnia_shuffle_init(playlistLength());
+  omnia_shuffle_set(store.sdsnuffle ? SHUFFLE_ON : SHUFFLE_OFF);
+  uint8_t r = getSdRepeat();
+  if(r > 2) r = 0;
+  omnia_shuffle_set_repeat(r==1 ? REPEAT_ONE : (r==2 ? REPEAT_ALL : REPEAT_OFF));
   saveValue(&store.play_mode, store.play_mode, true, true);
   _bootDone = true;
   loadStation(_lastStation);
@@ -590,6 +596,22 @@ void Config::setSnuffle(bool sn){
     omnia_shuffle_set(SHUFFLE_OFF);
   }
   // Don't auto next() to avoid cyclic first track bug
+}
+
+uint8_t Config::getSdRepeat(){
+  return (uint8_t)(store._reserved & 0x03);
+}
+
+void Config::setSdRepeat(uint8_t r){
+  r &= 0x03;
+  uint16_t v = store._reserved;
+  v = (v & ~0x03) | r;
+  saveValue(&store._reserved, v);
+  // apply to engine immediately
+  RepeatMode rm = REPEAT_OFF;
+  if(r==1) rm = REPEAT_ONE;
+  else if(r==2) rm = REPEAT_ALL;
+  omnia_shuffle_set_repeat(rm);
 }
 
 #if IR_PIN!=255
