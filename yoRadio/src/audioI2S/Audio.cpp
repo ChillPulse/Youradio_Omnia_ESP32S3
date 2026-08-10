@@ -4460,14 +4460,37 @@ void Audio::playAudioData() {
         else m_pad.bytesDecoded = 0; // Inbuff not filled enough
     }
 
+    bool endByTime = (m_codec == CODEC_M4A &&
+                      m_audioFileDuration > 0 &&
+                      m_audioCurrentTime >= m_audioFileDuration);
+
     if(m_pad.bytesDecoded <= 0) {
         if(m_pad.lastFrames) {m_f_eof = true; goto exit;} // end of file reached
         m_pad.count++;
         vTaskDelay(20); // wait for data
-        if(m_pad.count == 30) {if(m_f_allDataReceived) m_f_eof = true;}  // maybe slow stream
+        // >= (а не ==), чтобы не "проскочить" 30
+        if(m_pad.count >= 30) {
+            if(m_f_allDataReceived || endByTime) {
+                m_f_allDataReceived = true;
+                m_f_eof = true;
+                AUDIO_INFO("EOF forced (bytesDecoded<=0): allData=%d endByTime=%d count=%u",
+                           (int)m_f_allDataReceived, (int)endByTime, (unsigned)m_pad.count);
+            }
+        }
         goto exit; // syncword at pos0
     }
-    m_pad.count = 0;
+    // если уже дошли до конца трека по времени и декодер "жует" по 1-2 байта — не сбрасываем count
+    if(endByTime && m_pad.bytesDecoded <= 2) {
+        m_pad.count++;
+        if(m_pad.count >= 200) {              // порог "антизалип"; можно 100..500
+            m_f_allDataReceived = true;
+            m_f_eof = true;
+            AUDIO_INFO("EOF forced (micro-decode at end): bytes=%d count=%u",
+                       (int)m_pad.bytesDecoded, (unsigned)m_pad.count);
+        }
+    } else {
+        m_pad.count = 0;
+    }
 
     if(m_pad.bytesDecoded > 0) {
         InBuff.bytesWasRead(m_pad.bytesDecoded);
