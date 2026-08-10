@@ -241,6 +241,15 @@ void Config::initPlaylistMode(){
     _lastStation = getMode()==PM_WEB?1:_randomStation();
   }
   lastStation(_lastStation);
+  if(getMode() == PM_SDCARD){
+    uint16_t total = playlistLength();
+    omnia_shuffle_init(total);
+    omnia_shuffle_set(store.sdsnuffle ? SHUFFLE_ON : SHUFFLE_OFF);
+    uint8_t r = getSdRepeat();
+    if(r == 1) omnia_shuffle_set_repeat(REPEAT_ONE);
+    else if(r == 2) omnia_shuffle_set_repeat(REPEAT_ALL);
+    else omnia_shuffle_set_repeat(REPEAT_OFF);
+  }
   saveValue(&store.play_mode, store.play_mode, true, true);
   _bootDone = true;
   loadStation(_lastStation);
@@ -590,6 +599,22 @@ void Config::setSnuffle(bool sn){
     omnia_shuffle_set(SHUFFLE_OFF);
   }
   // Don't auto next() to avoid cyclic first track bug
+}
+
+uint8_t Config::getSdRepeat(){
+  return (uint8_t)(store._reserved & 0x03);
+}
+
+void Config::setSdRepeat(uint8_t r){
+  if(r > 2) r = 0;
+  uint16_t v = store._reserved;
+  v = (v & ~0x03) | (uint16_t)r;
+  saveValue(&store._reserved, v);
+  if(getMode() == PM_SDCARD){
+    if(r == 1) omnia_shuffle_set_repeat(REPEAT_ONE);
+    else if(r == 2) omnia_shuffle_set_repeat(REPEAT_ALL);
+    else omnia_shuffle_set_repeat(REPEAT_OFF);
+  }
 }
 
 #if IR_PIN!=255

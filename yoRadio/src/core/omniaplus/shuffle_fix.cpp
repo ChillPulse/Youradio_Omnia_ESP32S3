@@ -16,8 +16,7 @@ void omnia_shuffle_init(uint16_t total){
   pls.currentIdx = config.lastStation();
   if(pls.currentIdx==0) pls.currentIdx=1;
   if(pls.currentIdx>total) pls.currentIdx=total;
-  // keep repeat mode
-  if(!pls_initialized) pls.repeat = REPEAT_OFF; // default OFF for flagship: stop at end unless user sets ALL
+  // keep repeat mode (don't overwrite repeat in init)
   pls.shuffledPos = 0;
   pls.shuffledOrder = (uint16_t*)malloc(total*sizeof(uint16_t));
   if(!pls.shuffledOrder){

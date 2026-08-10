@@ -170,6 +170,12 @@ static void onAudioEofCommon(const char *info){
     player.omnia_aacIndexReset();
     // auto-next only for local sources (SD/USB), not WEB radio
     if(config.getMode()!=0){
+        if(omnia_shuffle_get_repeat() == REPEAT_ONE){
+            uint16_t cur = config.lastStation();
+            config.setLastStation(cur);
+            player.sendCommand({PR_PLAY, (int)cur});
+            return;
+        }
         extern uint16_t omnia_shuffle_next();
         uint16_t nxt = omnia_shuffle_next();
         if(nxt>0){
