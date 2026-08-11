@@ -24,18 +24,19 @@
 #include "opus_decoder/opus_decoder.h"
 #include "vorbis_decoder/vorbis_decoder.h"
 #include "psram_unique_ptr.hpp"
+#include <limits.h> // for UINT16_MAX
 
 // constants
 constexpr size_t    m_frameSizeWav       = 4096;
 constexpr size_t    m_frameSizeMP3       = 1600 * 2;
 constexpr size_t    m_frameSizeAAC       = 1600;
-constexpr size_t    m_frameSizeFLAC      = 4096 * 6; // 24576
-constexpr size_t    m_frameSizeOPUS      = 2048;
-constexpr size_t    m_frameSizeVORBIS    = 4096 * 2;
+constexpr size_t    m_frameSizeFLAC      = UINT16_MAX; // Ogg-FLAC metadata/pages may be large, 65535 max ogg size (was 4096*6=24576)
+constexpr size_t    m_frameSizeOPUS      = UINT16_MAX; // Ogg pages may be large (was 2048)
+constexpr size_t    m_frameSizeVORBIS    = UINT16_MAX; // Ogg pages may be large (was 4096*2)
 constexpr size_t    m_outbuffSize        = 4096 * 2;
 constexpr size_t    m_samplesBuff48KSize = m_outbuffSize * 8; // 131072KB  SRmin: 6KHz -> SRmax: 48K
 
-constexpr size_t    AUDIO_STACK_SIZE     = 3300;
+constexpr size_t    AUDIO_STACK_SIZE     = 5000;
 
 // static allocations for Audio task
 StaticTask_t __attribute__((unused)) xAudioTaskBuffer;
@@ -1587,9 +1588,10 @@ int Audio::read_FLAC_Header(uint8_t* data, size_t len) {
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     if(m_controlCounter == FLAC_MAGIC) {            /* check MAGIC STRING */
         if(specialIndexOf(data, "OggS", 10) == 0) { // is ogg
+            // Ogg-FLAC: treat header as ready; decoder will parse Ogg pages/FLAC packets itself
             m_rflh.headerSize = 0;
             m_rflh.retvalue = 0;
-            m_controlCounter = FLAC_OKAY;
+            m_controlCounter = 100; // header finished - Ogg-FLAC
             return 0;
         }
         if(specialIndexOf(data, "fLaC", 10) != 0) {
