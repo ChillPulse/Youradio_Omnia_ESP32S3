@@ -430,6 +430,8 @@ void Audio::setDefaults() {
     m_chunkcount = 0;      // for chunked streams
     m_lastGoodDecodeMs = 0;
     m_resyncSkipCnt = 0;
+    m_lastStallReconnectMs = 0;
+    m_stallReconnectTries = 0;
 //    m_curSample = 0;
     m_metaint = 0;        // No metaint yet
 //    m_LFcount = 0;        // For end of header detection
@@ -3980,15 +3982,32 @@ exit:
         return;
     }
 }
+bool Audio::stallReconnect(const char* reason){
+    if(!m_lastHost.valid()) return false;
+    // throttle: не чаще 1 раза в 2 секунды
+    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 2000) return false;
+    m_lastStallReconnectMs = millis();
+    m_stallReconnectTries++;
+    AUDIO_ERROR("Decode stalled -> reconnect #%u (%s)", (unsigned)m_stallReconnectTries, reason);
+    // после 3 попыток — сдаёмся (иначе бесконечная карусель)
+    if(m_stallReconnectTries > 3){
+        AUDIO_ERROR("Decode stalled: giving up");
+        stopSong();
+        return true;
+    }
+    // сохранить URL ДО stopSong(), т.к. stopSong()/setDefaults() могут очистить m_lastHost
+    ps_ptr<char> url(__LINE__);
+    url.assign(m_lastHost.get());
+    stopSong(); // корректно закрывает client/clientsecure и сбрасывает состояния
+    InBuff.resetBuffer(); // на всякий случай
+    return connecttohost(url.get());
+}
 //****************************************************************************************
 void Audio::processWebStream() {
     if(m_dataMode != AUDIO_DATA) return; // guard
-    // watchdog for decode stall / resync storm (Rec36) - if data keeps coming but no good decode for 5s and many resync skips -> reconnect
+    // watchdog for decode stall / resync storm (Rec36/37) - proper reconnect via stallReconnect
     if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && m_lastGoodDecodeMs && (millis() - m_lastGoodDecodeMs > 5000) && m_resyncSkipCnt > 50){
-        AUDIO_ERROR("Decode stalled -> reconnect (resyncCnt=%u, buf=%u)", (unsigned)m_resyncSkipCnt, (unsigned)InBuff.bufferFilled());
-        m_resyncSkipCnt = 0;
-        m_f_reset_m3u8Codec = false;
-        httpPrint(m_lastHost.get());
+        stallReconnect("webstream");
         return;
     }
     uint16_t readedBytes = 0;
@@ -4072,12 +4091,9 @@ void Audio::processWebStream() {
 //****************************************************************************************
 void Audio::processWebFile() {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return;}  // guard
-    // watchdog for decode stall / resync storm (Rec36)
+    // watchdog for decode stall / resync storm (Rec36/37) - proper reconnect
     if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && m_lastGoodDecodeMs && (millis() - m_lastGoodDecodeMs > 5000) && m_resyncSkipCnt > 50){
-        AUDIO_ERROR("Decode stalled -> reconnect (resyncCnt=%u, buf=%u)", (unsigned)m_resyncSkipCnt, (unsigned)InBuff.bufferFilled());
-        m_resyncSkipCnt = 0;
-        m_f_reset_m3u8Codec = false;
-        httpPrint(m_lastHost.get());
+        stallReconnect("webfile");
         return;
     }
     m_pwf.maxFrameSize = InBuff.getMaxBlockSize();        // every frame is not bigger
@@ -5613,6 +5629,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
         // watchdog: good decode seen
         m_lastGoodDecodeMs = millis();
         m_resyncSkipCnt = 0;
+        m_stallReconnectTries = 0;
     }
     return bytesDecoded;
 }

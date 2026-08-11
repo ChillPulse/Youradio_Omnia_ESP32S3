@@ -227,6 +227,7 @@ class Audio{
     void         processLocalFile();
     void         processWebStream();
     void         processWebFile();
+    bool         stallReconnect(const char* reason);
     void         processWebStreamTS();
     void         processWebStreamHLS();
     void         playAudioData();
@@ -733,6 +734,8 @@ private:
     bool            m_f_connectionClose = false;    // set in parseHttpResponseHeader
     volatile uint32_t m_lastGoodDecodeMs = 0;     // watchdog for decode stall
     volatile uint16_t m_resyncSkipCnt = 0;        // resync storm counter
+    uint32_t        m_lastStallReconnectMs = 0;
+    uint8_t         m_stallReconnectTries = 0;
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;
