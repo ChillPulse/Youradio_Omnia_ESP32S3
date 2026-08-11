@@ -3090,9 +3090,12 @@ uint32_t Audio::stopSong() {
         uint32_t pos = 0;
         if(m_f_running) {
             m_f_running = false;
-            if(m_client && m_client->connected()){
+            // close network safely (avoid calling stop() via m_client pointer) - Fix for Log28 crash at Closing web file
+            if(m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE || m_f_stream){
                 AUDIO_INFO("Closing web file \"%s\"", m_lastHost.c_get());
-                m_client->stop();
+                client.stop();
+                clientsecure.stop();
+                m_client = static_cast<NetworkClient*>(&client); // restore safe default
             }
             if(m_audiofile) {
                AUDIO_INFO("Closing audio file \"%s\"", m_audiofile.name());
