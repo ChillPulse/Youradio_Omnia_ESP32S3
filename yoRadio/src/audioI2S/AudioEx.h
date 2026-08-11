@@ -12,6 +12,7 @@
 
 #pragma once
 #pragma GCC optimize ("Ofast")
+#include <limits.h> // for UINT16_MAX
 #include "esp_arduino_version.h"
 #include <vector>
 #include <deque>
@@ -115,7 +116,7 @@ protected:
     size_t            m_freeSpace        = 0;
     size_t            m_writeSpace       = 0;
     size_t            m_dataLength       = 0;
-    size_t            m_resBuffSize      = 4096 * 6; // reserved buffspace, >= one flac frame
+    size_t            m_resBuffSize      = UINT16_MAX; // reserve must be >= maxBlockSize (OGG pages may be up to 64KB)
     size_t            m_maxBlockSize     = 1600;
     ps_ptr<uint8_t>   m_buffer;
     uint8_t*          m_writePtr         = NULL;
