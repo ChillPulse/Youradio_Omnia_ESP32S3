@@ -428,6 +428,8 @@ void Audio::setDefaults() {
     m_nominal_bitrate = 0;
     m_bytesNotConsumed = 0; // counts all not decodable bytes
     m_chunkcount = 0;      // for chunked streams
+    m_lastGoodDecodeMs = 0;
+    m_resyncSkipCnt = 0;
 //    m_curSample = 0;
     m_metaint = 0;        // No metaint yet
 //    m_LFcount = 0;        // For end of header detection
@@ -3981,6 +3983,14 @@ exit:
 //****************************************************************************************
 void Audio::processWebStream() {
     if(m_dataMode != AUDIO_DATA) return; // guard
+    // watchdog for decode stall / resync storm (Rec36) - if data keeps coming but no good decode for 5s and many resync skips -> reconnect
+    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && m_lastGoodDecodeMs && (millis() - m_lastGoodDecodeMs > 5000) && m_resyncSkipCnt > 50){
+        AUDIO_ERROR("Decode stalled -> reconnect (resyncCnt=%u, buf=%u)", (unsigned)m_resyncSkipCnt, (unsigned)InBuff.bufferFilled());
+        m_resyncSkipCnt = 0;
+        m_f_reset_m3u8Codec = false;
+        httpPrint(m_lastHost.get());
+        return;
+    }
     uint16_t readedBytes = 0;
 
     m_pwst.maxFrameSize = InBuff.getMaxBlockSize(); // every mp3/aac frame is not bigger
@@ -4062,6 +4072,14 @@ void Audio::processWebStream() {
 //****************************************************************************************
 void Audio::processWebFile() {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return;}  // guard
+    // watchdog for decode stall / resync storm (Rec36)
+    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && m_lastGoodDecodeMs && (millis() - m_lastGoodDecodeMs > 5000) && m_resyncSkipCnt > 50){
+        AUDIO_ERROR("Decode stalled -> reconnect (resyncCnt=%u, buf=%u)", (unsigned)m_resyncSkipCnt, (unsigned)InBuff.bufferFilled());
+        m_resyncSkipCnt = 0;
+        m_f_reset_m3u8Codec = false;
+        httpPrint(m_lastHost.get());
+        return;
+    }
     m_pwf.maxFrameSize = InBuff.getMaxBlockSize();        // every frame is not bigger
     uint32_t availableBytes = 0;
     int32_t bytesAddedToBuffer = 0;
@@ -5453,7 +5471,10 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
         m_sbyt.nextSync = findNextSync(data, len);
         if(m_sbyt.nextSync <  0) return len; // no syncword found
         if(m_sbyt.nextSync == 0) { m_f_playing = true; }
-        if(m_sbyt.nextSync >  0) return m_sbyt.nextSync;
+        if(m_sbyt.nextSync >  0) {
+            m_resyncSkipCnt++;
+            return m_sbyt.nextSync;
+        }
     }
     // m_f_playing is true at this pos
     int res = 0;
@@ -5587,7 +5608,12 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
     calculateAudioTime(bytesDecoded, bytesDecoderOut);
 
 //    m_curSample = 0;
-    if(m_validSamples) {playChunk();}
+    if(m_validSamples) {
+        playChunk();
+        // watchdog: good decode seen
+        m_lastGoodDecodeMs = millis();
+        m_resyncSkipCnt = 0;
+    }
     return bytesDecoded;
 }
 //****************************************************************************************

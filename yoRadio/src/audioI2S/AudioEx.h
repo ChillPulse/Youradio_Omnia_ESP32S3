@@ -731,6 +731,8 @@ private:
     bool            m_f_acceptRanges = false;
     bool            m_f_reset_m3u8Codec = true;     // reset codec for m3u8 stream
     bool            m_f_connectionClose = false;    // set in parseHttpResponseHeader
+    volatile uint32_t m_lastGoodDecodeMs = 0;     // watchdog for decode stall
+    volatile uint16_t m_resyncSkipCnt = 0;        // resync storm counter
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;
