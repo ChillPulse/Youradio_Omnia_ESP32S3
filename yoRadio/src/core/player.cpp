@@ -324,7 +324,22 @@ void Player::_play(uint16_t stationId) {
   }else {
     config.saveValue(&config.store.play_mode, static_cast<uint8_t>(PM_WEB));
   }
-  if(config.getMode()==PM_WEB) isConnected=connecttohost(config.station.url);
+  if(config.getMode()==PM_WEB) {
+    // Flagship retry for WEB FLAC/OGG per TЗ: 3 attempts with backoff 300/1000/2000 ms
+    bool ok = false;
+    for(int attempt=0; attempt<3 && !ok; attempt++){
+      if(attempt>0){
+        uint32_t d = (attempt==1)?300:(attempt==2?1000:2000);
+        // For first retry attempt==1 delay 300, second retry attempt==2 delay 1000 (spec says 300/1000/2000)
+        if(attempt==1) d = 300;
+        else if(attempt==2) d = 1000;
+        telnet.printf("# WEB connect retry %d/3 for %s after %lums\n", attempt+1, config.station.url, (unsigned long)d);
+        delay(d);
+      }
+      ok = connecttohost(config.station.url);
+    }
+    isConnected = ok;
+  }
   if(isConnected){
   //if (config.store.play_mode==PM_WEB?connecttohost(config.station.url):connecttoFS(SD,config.station.url,config.sdResumePos==0?_resumeFilePos:config.sdResumePos)) {
     _status = PLAYING;

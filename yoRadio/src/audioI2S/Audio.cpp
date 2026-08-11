@@ -839,9 +839,9 @@ bool Audio::httpPrint(const char* host) {
     AUDIO_INFO("next URL: \"%s\"", c_host.get());
 
     if(f_equal == false){
-        if(m_client->connected()) m_client->stop();
+        if(m_client && m_client->connected()) m_client->stop();
     }
-    if(!m_client->connected() ) {
+    if(!m_client || !m_client->connected() ) {
          if(m_f_ssl) { m_client = static_cast<NetworkClientSecure*>(&clientsecure); if(m_f_ssl && port == 80) port = 443;}
          else        { m_client = static_cast<NetworkClient*>(&client); }
         if(f_equal) AUDIO_INFO("The host has disconnected, reconnecting");
@@ -943,7 +943,7 @@ bool Audio::httpRange(uint32_t seek, uint32_t length){
     rqh.append("Sec-GPC: 1\r\n");
     rqh.append("User-Agent: VLC/3.0.21 LibVLC/3.0.21 AppleWebKit/537.36 (KHTML, like Gecko)\r\n\r\n");
 
-    if(m_client->connected()) {m_client->stop();}
+    if(m_client && m_client->connected()) {m_client->stop();}
     if(m_f_ssl) { m_client = static_cast<NetworkClientSecure*>(&clientsecure); if(m_f_ssl && port == 80) port = 443;}
     else        { m_client = static_cast<NetworkClient*>(&client); }
 
@@ -3088,7 +3088,7 @@ uint32_t Audio::stopSong() {
         uint32_t pos = 0;
         if(m_f_running) {
             m_f_running = false;
-            if(m_client->connected()){
+            if(m_client && m_client->connected()){
                 AUDIO_INFO("Closing web file \"%s\"", m_lastHost.c_get());
                 m_client->stop();
             }
@@ -7120,7 +7120,7 @@ uint8_t Audio::determineOggCodec(uint8_t* data, uint16_t len) {
     // let's have a look, what it is
     int idx = specialIndexOf(data, "OggS", 6);
     if(idx != 0) {
-        if(specialIndexOf(data, "fLaC", 6)) return CODEC_FLAC;
+        if(specialIndexOf(data, "fLaC", 6) == 0) return CODEC_FLAC;
         return CODEC_NONE;
     }
     data += 27;
