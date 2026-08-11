@@ -4417,6 +4417,7 @@ void Audio::playAudioData() {
     //--------------------------------------------------------------------------------
 
     m_f_audioTaskIsDecoding = true;
+    bool endByTime = false;
 
     if((m_dataMode == AUDIO_LOCALFILE || m_streamType == ST_WEBFILE) && m_playlistFormat != FORMAT_M3U8)  { // local file or webfile but not m3u8 file
         if(!m_audioDataSize) goto exit; // no data to decode if filesize is 0
@@ -4460,9 +4461,9 @@ void Audio::playAudioData() {
         else m_pad.bytesDecoded = 0; // Inbuff not filled enough
     }
 
-    bool endByTime = (m_codec == CODEC_M4A &&
-                      m_audioFileDuration > 0 &&
-                      m_audioCurrentTime >= m_audioFileDuration);
+    endByTime = (m_codec == CODEC_M4A &&
+                 m_audioFileDuration > 0 &&
+                 m_audioCurrentTime >= m_audioFileDuration);
 
     if(m_pad.bytesDecoded <= 0) {
         if(m_pad.lastFrames) {m_f_eof = true; goto exit;} // end of file reached
