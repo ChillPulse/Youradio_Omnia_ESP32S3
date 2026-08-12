@@ -31,8 +31,15 @@ constexpr size_t    m_frameSizeWav       = 4096;
 constexpr size_t    m_frameSizeMP3       = 1600 * 2;
 constexpr size_t    m_frameSizeAAC       = 1600;
 constexpr size_t    m_frameSizeFLAC      = UINT16_MAX; // Ogg-FLAC metadata/pages may be large, 65535 max ogg size (was 4096*6=24576)
+#ifndef OMNIA_SMALL_OGG_OPUS_VORBIS
+// current "big ogg page" mode
 constexpr size_t    m_frameSizeOPUS      = UINT16_MAX; // Ogg pages may be large (was 2048)
 constexpr size_t    m_frameSizeVORBIS    = UINT16_MAX; // Ogg pages may be large (was 4096*2)
+#else
+// comparison mode (historically stable for most stations)
+constexpr size_t    m_frameSizeOPUS      = 2048;
+constexpr size_t    m_frameSizeVORBIS    = 4096 * 2; // 8192
+#endif
 constexpr size_t    m_outbuffSize        = 4096 * 2;
 constexpr size_t    m_samplesBuff48KSize = m_outbuffSize * 8; // 131072KB  SRmin: 6KHz -> SRmax: 48K
 
