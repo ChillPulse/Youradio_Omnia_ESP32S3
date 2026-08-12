@@ -377,8 +377,9 @@ void Audio::setDefaults() {
     m_syltTimeStamp.clear();
     m_hashQueue.clear();
     m_hashQueue.shrink_to_fit(); // uint32_t vector
-    client.stop();
-    clientsecure.stop();
+    // stopSong() already tried to stop active client; here only stop leftovers if still connected (avoid double-stop crash)
+    if(client.connected()) client.stop();
+    if(clientsecure.connected()) clientsecure.stop();
     m_client = static_cast<NetworkClient*>(&client); /* default to *something* so that no NULL deref can happen */
     ts_parsePacket(0, 0, 0);                     // reset ts routine
     m_lastM3U8host.reset();
@@ -741,7 +742,7 @@ bool Audio::connecttohost(const char* host, const char* user, const char* pwd) {
     m_client->setTimeout(m_f_ssl ? m_timeout_ms_ssl : m_timeout_ms);
 
     AUDIO_INFO("connect to: \"%s\" on port %d path \"/%s\"", hwoe.get(), port, path.get());
-    res = m_client->connect(hwoe.get(), port);
+    res = m_client->connect(hwoe.get(), port, m_f_ssl ? m_timeout_ms_ssl : m_timeout_ms);
 
     m_expectedCodec = CODEC_NONE;
     m_expectedPlsFmt = FORMAT_NONE;
@@ -4001,8 +4002,8 @@ exit:
 }
 bool Audio::stallReconnect(const char* reason){
     if(!m_lastHost.valid()) return false;
-    // throttle: не чаще 1 раза в 1 секунду (was 2s, now faster per Rec40)
-    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 1000) return false;
+    // throttle: не чаще 1 раза в 800ms (Rec41, was 1000)
+    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 800) return false;
     m_lastStallReconnectMs = millis();
     m_stallReconnectTries++;
     AUDIO_ERROR("Decode stalled -> reconnect #%u (%s)", (unsigned)m_stallReconnectTries, reason);
@@ -4022,9 +4023,9 @@ bool Audio::stallReconnect(const char* reason){
 //****************************************************************************************
 void Audio::processWebStream() {
     if(m_dataMode != AUDIO_DATA) return; // guard
-    // watchdog for decode stall / resync storm (Rec36/37/40) - faster, uses connect timestamp fallback
+    // watchdog for decode stall / resync storm (Rec36/37/40/41) - faster 1200ms / >10
     uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
-    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 2000) && m_resyncSkipCnt > 20){
+    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 1200) && m_resyncSkipCnt > 10){
         stallReconnect("webstream");
         return;
     }
@@ -4109,9 +4110,9 @@ void Audio::processWebStream() {
 //****************************************************************************************
 void Audio::processWebFile() {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return;}  // guard
-    // watchdog for decode stall / resync storm (Rec36/37/40) - faster, uses connect timestamp fallback
+    // watchdog for decode stall / resync storm (Rec36/37/40/41) - faster 1200ms / >10
     uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
-    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 2000) && m_resyncSkipCnt > 20){
+    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 1200) && m_resyncSkipCnt > 10){
         stallReconnect("webfile");
         return;
     }
