@@ -685,6 +685,8 @@ private:
     uint16_t        m_streamTitleHash = 0;          // remember streamtitle, ignore multiple occurence in metadata
     uint16_t        m_timeout_ms = 250;
     uint16_t        m_timeout_ms_ssl = 2700;
+    uint16_t        m_hdr_timeout_ms = 2000; // HTTP header timeout (plain)
+    uint16_t        m_hdr_timeout_ms_ssl = 3000; // HTTP header timeout (SSL)
     uint32_t        m_metaint = 0;                  // Number of databytes between metadata
     uint32_t        m_chunkcount = 0 ;              // Counter for chunked transfer
     uint32_t        m_t0 = 0;                       // store millis(), is needed for a small delay

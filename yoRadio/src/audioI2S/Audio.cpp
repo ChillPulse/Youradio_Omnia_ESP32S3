@@ -863,7 +863,9 @@ bool Audio::httpPrint(const char* host) {
          else        { m_client = static_cast<NetworkClient*>(&client); }
         if(f_equal) AUDIO_INFO("The host has disconnected, reconnecting");
 
-        if(!m_client->connect(hwoe.get(), port)) {
+        uint16_t ct = m_f_ssl ? m_timeout_ms_ssl : m_timeout_ms;
+        m_client->setTimeout(ct);
+        if(!m_client->connect(hwoe.get(), port, ct)) {
             AUDIO_ERROR("connection lost %s", c_host.c_get());
             stopSong();
             return false;
@@ -964,7 +966,9 @@ bool Audio::httpRange(uint32_t seek, uint32_t length){
     if(m_f_ssl) { m_client = static_cast<NetworkClientSecure*>(&clientsecure); if(m_f_ssl && port == 80) port = 443;}
     else        { m_client = static_cast<NetworkClient*>(&client); }
 
-    if(!m_client->connect(hwoe.get(), port)) {
+    uint16_t ct = m_f_ssl ? m_timeout_ms_ssl : m_timeout_ms;
+    m_client->setTimeout(ct);
+    if(!m_client->connect(hwoe.get(), port, ct)) {
         AUDIO_ERROR("connection lost %s", c_host.c_get());
         stopSong();
         return false;
@@ -4002,8 +4006,8 @@ exit:
 }
 bool Audio::stallReconnect(const char* reason){
     if(!m_lastHost.valid()) return false;
-    // throttle: не чаще 1 раза в 800ms (Rec41, was 1000)
-    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 800) return false;
+    // throttle: не чаще 1 раза в 600ms (Rec42, was 800)
+    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 600) return false;
     m_lastStallReconnectMs = millis();
     m_stallReconnectTries++;
     AUDIO_ERROR("Decode stalled -> reconnect #%u (%s)", (unsigned)m_stallReconnectTries, reason);
@@ -4023,9 +4027,9 @@ bool Audio::stallReconnect(const char* reason){
 //****************************************************************************************
 void Audio::processWebStream() {
     if(m_dataMode != AUDIO_DATA) return; // guard
-    // watchdog for decode stall / resync storm (Rec36/37/40/41) - faster 1200ms / >10
+    // watchdog for decode stall / resync storm (Rec36/37/40/41/42) - faster 900ms / >6
     uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
-    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 1200) && m_resyncSkipCnt > 10){
+    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 900) && m_resyncSkipCnt > 6){
         stallReconnect("webstream");
         return;
     }
@@ -4110,9 +4114,9 @@ void Audio::processWebStream() {
 //****************************************************************************************
 void Audio::processWebFile() {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return;}  // guard
-    // watchdog for decode stall / resync storm (Rec36/37/40/41) - faster 1200ms / >10
+    // watchdog for decode stall / resync storm (Rec36/37/40/41/42) - faster 900ms / >6
     uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
-    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 1200) && m_resyncSkipCnt > 10){
+    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 900) && m_resyncSkipCnt > 6){
         stallReconnect("webfile");
         return;
     }
@@ -4572,7 +4576,7 @@ bool Audio::parseHttpResponseHeader() { // this is the response to a GET / reque
 
     memset(&m_phreh, 0, sizeof(m_phreh));
     m_phreh.ctime = millis();
-    m_phreh.timeout = 4500; // ms	(HEADER_TIMEOUT))
+    m_phreh.timeout = m_f_ssl ? m_hdr_timeout_ms_ssl : m_hdr_timeout_ms; // was 4500
 
     if(m_client->available() == 0) {
         if(!m_phreh.f_time) {
@@ -4848,7 +4852,7 @@ bool Audio::parseHttpRangeHeader() { // this is the response to a Range request
     }
 
     m_phrah.ctime = millis();
-    m_phrah.timeout = 4500; // ms
+    m_phrah.timeout = m_f_ssl ? m_hdr_timeout_ms_ssl : m_hdr_timeout_ms; // was 4500
 
     if(m_client->available() == 0) {
         if(!m_phrah.f_time) {
