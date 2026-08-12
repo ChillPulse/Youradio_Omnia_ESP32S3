@@ -630,6 +630,10 @@ audiolib::hwoe_t Audio::dismantle_host(const char* host){
         result.port = atoi(port_sep + 1);
         result.rqh_host.appendf(":%u", result.port);
     }
+    // Flagship: if port is 443, treat as SSL even if scheme is missing or "http://"
+    if(result.port == 443 && result.ssl == false){
+        result.ssl = true;
+    }
 
     // ❓ 4. extract extension (path)
     if (path_sep) {
