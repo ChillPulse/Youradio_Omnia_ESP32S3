@@ -3104,8 +3104,8 @@ size_t Audio::process_m3u8_ID3_Header(uint8_t* packet) {
 //****************************************************************************************
 uint32_t Audio::stopSong() {
     m_f_lockInBuffer = true; // wait for the decoding to finish
-        uint8_t maxWait = 0;
-        while(m_f_audioTaskIsDecoding) {vTaskDelay(1); maxWait++; if(maxWait > 100) break;} // in case of error wait max 100ms
+        uint32_t i = 0;
+        while(m_f_audioTaskIsDecoding && (++i < 300)) {vTaskDelay(1);} // wait up to 300ms, avoid freeing while decoding (was 100)
         uint32_t currTime = getAudioCurrentTime();
         uint32_t pos = 0;
         if(m_f_running) {
@@ -3113,11 +3113,11 @@ uint32_t Audio::stopSong() {
             // close network safely (avoid calling stop() via m_client pointer) - Fix for Log28/Log31 crash at Closing web file, stop only active client
             if(m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE || m_f_stream){
                 AUDIO_INFO("Closing web file \"%s\" (ssl=%d)", m_lastHost.c_get(), (int)m_f_ssl);
-                // Stop ONLY the active client. Stopping the unused one may crash on some cores/streams.
+                // Stop ONLY the active client, and only if still connected
                 if(m_f_ssl){
-                    clientsecure.stop();
+                    if(clientsecure.connected()) clientsecure.stop();
                 } else {
-                    client.stop();
+                    if(client.connected()) client.stop();
                 }
                 // restore safe defaults
                 m_f_ssl = false;
@@ -7030,6 +7030,9 @@ exit:
 boolean Audio::streamDetection(uint32_t bytesAvail) {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return false;}
 
+    const uint32_t LOW_WATER = 12000; // below -> possible dropouts
+    const uint32_t OK_WATER = 60000; // above -> stream is healthy (matches existing "stream ready >60000")
+
     // if within one second the content of the audio buffer falls below the size of an audio frame 100 times,
     // issue a message
     if(m_sdet.tmr_slow + 1000 < millis()) {
@@ -7037,12 +7040,12 @@ boolean Audio::streamDetection(uint32_t bytesAvail) {
         if(m_sdet.cnt_slow > 100) AUDIO_INFO("slow stream, dropouts are possible");
         m_sdet.cnt_slow = 0;
     }
-    if(InBuff.bufferFilled() < InBuff.getMaxBlockSize()) m_sdet.cnt_slow++;
+    if(InBuff.bufferFilled() < LOW_WATER) m_sdet.cnt_slow++;
     if(bytesAvail) {
         m_sdet.tmr_lost = millis() + 1000;
         m_sdet.cnt_lost = 0;
     }
-    if(InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2) return false; // enough data available to play
+    if(InBuff.bufferFilled() > OK_WATER) return false; // enough data available to play
 
     // if no audio data is received within three seconds, a new connection attempt is started.
     if(m_sdet.tmr_lost < millis()) {
@@ -7052,7 +7055,7 @@ boolean Audio::streamDetection(uint32_t bytesAvail) {
             m_sdet.cnt_lost = 0;
             AUDIO_INFO("Stream lost -> try new connection");
             m_f_reset_m3u8Codec = false;
-            httpPrint(m_lastHost.get());
+            stallReconnect("streamLost");
             return true;
         }
     }
