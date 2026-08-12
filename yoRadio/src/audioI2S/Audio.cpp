@@ -432,6 +432,7 @@ void Audio::setDefaults() {
     m_resyncSkipCnt = 0;
     m_lastStallReconnectMs = 0;
     m_stallReconnectTries = 0;
+    m_lastConnectOkMs = 0;
 //    m_curSample = 0;
     m_metaint = 0;        // No metaint yet
 //    m_LFcount = 0;        // For end of header detection
@@ -673,6 +674,8 @@ bool Audio::connecttohost(const char* host, const char* user, const char* pwd) {
     c_host.copy_from(host);
     c_host.trim();
     auto dismantledHost = dismantle_host(c_host.get());
+    const bool new_ssl = dismantledHost.ssl;
+    const uint16_t new_port = dismantledHost.port;
 
 //  https://edge.live.mp3.mdn.newmedia.nacamar.net:8000/ps-charivariwb/livestream.mp3;?user=ps-charivariwb;&pwd=ps-charivariwb-------
 //      |   |                                     |    |                              |
@@ -680,9 +683,6 @@ bool Audio::connecttohost(const char* host, const char* user, const char* pwd) {
 //  ssl?|   |<-----host without extension-------->|port|<----- --extension----------->|<-first parameter->|<-second parameter->.......
 //                                                     |
 //                                                     |<-----------------------------path------------------------------------>......
-
-    m_f_ssl = dismantledHost.ssl;
-    port = dismantledHost.port;
     if(dismantledHost.hwoe.valid()) hwoe.clone_from(dismantledHost.hwoe);
     if(dismantledHost.rqh_host.valid()) rqh_host.clone_from(dismantledHost.rqh_host);
     if(dismantledHost.extension.valid()) extension.clone_from(dismantledHost.extension);
@@ -710,6 +710,8 @@ bool Audio::connecttohost(const char* host, const char* user, const char* pwd) {
     }
 
     setDefaults();
+    m_f_ssl = new_ssl;
+    port = new_port;
 
                        rqh.assign("GET /");
                        rqh.append(path.get());
@@ -731,6 +733,10 @@ bool Audio::connecttohost(const char* host, const char* user, const char* pwd) {
     if(m_f_ssl) { m_client = static_cast<NetworkClientSecure*>(&clientsecure); if(port == 80) port = 443;}
     else        { m_client = static_cast<NetworkClient*>(&client); }
 
+    if(m_f_ssl){
+        // limit TLS handshake time (seconds). If method not available in this core, compilation will fail -> then remove.
+        clientsecure.setHandshakeTimeout(8);
+    }
     timestamp = millis();
     m_client->setTimeout(m_f_ssl ? m_timeout_ms_ssl : m_timeout_ms);
 
@@ -744,6 +750,7 @@ bool Audio::connecttohost(const char* host, const char* user, const char* pwd) {
         uint32_t dt = millis() - timestamp;
         AUDIO_INFO("%s has been established in %lu ms", m_f_ssl ? "SSL" : "Connection", (long unsigned int)dt);
         m_f_running = true;
+        m_lastConnectOkMs = millis();
         m_client->print(rqh.get());
         if(extension.ends_with_icase( ".mp3" ))      m_expectedCodec  = CODEC_MP3;
         if(extension.ends_with_icase( ".aac" ))      m_expectedCodec  = CODEC_AAC;
@@ -3994,8 +4001,8 @@ exit:
 }
 bool Audio::stallReconnect(const char* reason){
     if(!m_lastHost.valid()) return false;
-    // throttle: не чаще 1 раза в 2 секунды
-    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 2000) return false;
+    // throttle: не чаще 1 раза в 1 секунду (was 2s, now faster per Rec40)
+    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 1000) return false;
     m_lastStallReconnectMs = millis();
     m_stallReconnectTries++;
     AUDIO_ERROR("Decode stalled -> reconnect #%u (%s)", (unsigned)m_stallReconnectTries, reason);
@@ -4015,8 +4022,9 @@ bool Audio::stallReconnect(const char* reason){
 //****************************************************************************************
 void Audio::processWebStream() {
     if(m_dataMode != AUDIO_DATA) return; // guard
-    // watchdog for decode stall / resync storm (Rec36/37) - proper reconnect via stallReconnect
-    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && m_lastGoodDecodeMs && (millis() - m_lastGoodDecodeMs > 5000) && m_resyncSkipCnt > 50){
+    // watchdog for decode stall / resync storm (Rec36/37/40) - faster, uses connect timestamp fallback
+    uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
+    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 2000) && m_resyncSkipCnt > 20){
         stallReconnect("webstream");
         return;
     }
@@ -4101,8 +4109,9 @@ void Audio::processWebStream() {
 //****************************************************************************************
 void Audio::processWebFile() {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return;}  // guard
-    // watchdog for decode stall / resync storm (Rec36/37) - proper reconnect
-    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && m_lastGoodDecodeMs && (millis() - m_lastGoodDecodeMs > 5000) && m_resyncSkipCnt > 50){
+    // watchdog for decode stall / resync storm (Rec36/37/40) - faster, uses connect timestamp fallback
+    uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
+    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 2000) && m_resyncSkipCnt > 20){
         stallReconnect("webfile");
         return;
     }

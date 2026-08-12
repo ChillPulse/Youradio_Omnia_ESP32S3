@@ -736,6 +736,7 @@ private:
     volatile uint16_t m_resyncSkipCnt = 0;        // resync storm counter
     uint32_t        m_lastStallReconnectMs = 0;
     uint8_t         m_stallReconnectTries = 0;
+    uint32_t        m_lastConnectOkMs = 0;
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;
