@@ -441,6 +441,8 @@ void Audio::setDefaults() {
     m_lastStallReconnectMs = 0;
     m_stallReconnectTries = 0;
     m_lastConnectOkMs = 0;
+    m_flacStallWindowMs = 0;
+    m_flacStallWindowCnt = 0;
 //    m_curSample = 0;
     m_metaint = 0;        // No metaint yet
 //    m_LFcount = 0;        // For end of header detection
@@ -4016,6 +4018,20 @@ bool Audio::stallReconnect(const char* reason){
     // throttle: не чаще 1 раза в 600ms (Rec42, was 800)
     if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 600) return false;
     m_lastStallReconnectMs = millis();
+    // FLAC-specific fail-fast: if FLAC stalls twice within 30s, stop instead of endless reconnects
+    if(m_codec == CODEC_FLAC){
+        uint32_t now = millis();
+        if(!m_flacStallWindowMs || (now - m_flacStallWindowMs) > 30000){
+            m_flacStallWindowMs = now;
+            m_flacStallWindowCnt = 0;
+        }
+        m_flacStallWindowCnt++;
+        if(m_flacStallWindowCnt >= 2){
+            AUDIO_ERROR("Unstable OGG-FLAC stream -> stop (reason=%s)", reason);
+            stopSong();
+            return true;
+        }
+    }
     m_stallReconnectTries++;
     AUDIO_ERROR("Decode stalled -> reconnect #%u (%s)", (unsigned)m_stallReconnectTries, reason);
     // после 3 попыток — сдаёмся (иначе бесконечная карусель)
@@ -4034,7 +4050,7 @@ bool Audio::stallReconnect(const char* reason){
 //****************************************************************************************
 void Audio::processWebStream() {
     if(m_dataMode != AUDIO_DATA) return; // guard
-    // watchdog for decode stall / resync storm (Rec46) - grace period + faster reconnect
+    // watchdog for decode stall / resync storm (Rec46/Rec47) - grace period + FLAC-specific thresholds
     const uint32_t GRACE_MS = 4000; // allow decoder to lock on stream after connect
     uint32_t now = millis();
     if(m_f_stream){
@@ -4042,7 +4058,15 @@ void Audio::processWebStream() {
             // do nothing during grace window
         } else {
             uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
-            if(InBuff.bufferFilled() > 60000 && ref && (now - ref > 900) && m_resyncSkipCnt > 6){
+            uint32_t stallBufMin = 60000;
+            uint32_t stallMs = 900;
+            uint16_t stallResync = 6;
+            if(m_codec == CODEC_FLAC){
+                stallBufMin = 120000; // less false triggers on flac
+                stallMs = 1800; // give chance to resync without reconnect
+                stallResync = 20;
+            }
+            if(InBuff.bufferFilled() > stallBufMin && ref && (now - ref > stallMs) && m_resyncSkipCnt > stallResync){
                 stallReconnect("webstream");
                 return;
             }
@@ -4146,15 +4170,23 @@ void Audio::processWebStream() {
 //****************************************************************************************
 void Audio::processWebFile() {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return;}  // guard
-    // watchdog for decode stall / resync storm (Rec46) - grace period + faster reconnect
+    // watchdog for decode stall / resync storm (Rec46/Rec47) - grace period + FLAC-specific thresholds
     const uint32_t GRACE_MS = 4000;
     uint32_t now = millis();
     if(m_f_stream){
         if(m_lastGoodDecodeMs == 0 && m_lastConnectOkMs && (now - m_lastConnectOkMs) < GRACE_MS){
-            // do nothing
+            // do nothing during grace window
         } else {
             uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
-            if(InBuff.bufferFilled() > 60000 && ref && (now - ref > 900) && m_resyncSkipCnt > 6){
+            uint32_t stallBufMin = 60000;
+            uint32_t stallMs = 900;
+            uint16_t stallResync = 6;
+            if(m_codec == CODEC_FLAC){
+                stallBufMin = 120000;
+                stallMs = 1800;
+                stallResync = 20;
+            }
+            if(InBuff.bufferFilled() > stallBufMin && ref && (now - ref > stallMs) && m_resyncSkipCnt > stallResync){
                 stallReconnect("webfile");
                 return;
             }
