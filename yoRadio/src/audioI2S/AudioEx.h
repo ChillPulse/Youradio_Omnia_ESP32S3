@@ -662,7 +662,8 @@ private:
     double          m_limit_right = 0;              // limiter 0 ... 1, right channel
 //    uint8_t         m_timeoutCounter = 0;           // timeout counter
 //    uint8_t         m_curve = 0;                    // volume characteristic
-    uint8_t         m_bitsPerSample = 16;           // bitsPerSample
+    uint8_t         m_bitsPerSample = 16;           // bitsPerSample (output)
+    uint8_t         m_sourceBitsPerSample = 16;     // source bits (may be 24, downconverted to 16)
     uint8_t         m_channels = 2;
     uint8_t         m_i2s_num = I2S_NUM_0;          // I2S_NUM_0 or I2S_NUM_1
     uint8_t         m_playlistFormat = 0;           // M3U, PLS, ASX

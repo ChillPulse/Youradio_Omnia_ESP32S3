@@ -443,6 +443,7 @@ void Audio::setDefaults() {
     m_lastConnectOkMs = 0;
     m_flacStallWindowMs = 0;
     m_flacStallWindowCnt = 0;
+    m_sourceBitsPerSample = 16;
 //    m_curSample = 0;
     m_metaint = 0;        // No metaint yet
 //    m_LFcount = 0;        // For end of header detection
@@ -5524,8 +5525,12 @@ void Audio::setDecoderItems() {
             AUDIO_INFO("Bitrate: %lu", m_nominal_bitrate);
         }*/
     }
+    if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24) {
+        AUDIO_ERROR("Bits per sample must be 8 or 16 or 24, found %i", m_sourceBitsPerSample);
+        stopSong();
+    }
     if(getBitsPerSample() != 8 && getBitsPerSample() != 16) {
-        AUDIO_ERROR("Bits per sample must be 8 or 16, found %i", getBitsPerSample());
+        AUDIO_ERROR("Bits per sample output must be 8 or 16, found %i", getBitsPerSample());
         stopSong();
     }
     if(getChannels() != 1 && getChannels() != 2) {
@@ -6115,9 +6120,16 @@ bool Audio::setSampleRate(uint32_t sampRate) {
 uint32_t Audio::getSampleRate() { return m_sampleRate; }
 //****************************************************************************************
 bool Audio::setBitsPerSample(int bits) {
-    if((bits != 16) && (bits != 8)) return false;
-    m_bitsPerSample = bits;
-    return true;
+    m_sourceBitsPerSample = bits;
+    if(bits == 8 || bits == 16){
+        m_bitsPerSample = bits;
+        return true;
+    }
+    if(bits == 24){
+        m_bitsPerSample = 16; // downconvert output, keep 24 as source
+        return true;
+    }
+    return false;
 }
 uint8_t Audio::getBitsPerSample() { return m_bitsPerSample; }
 //****************************************************************************************
@@ -7264,20 +7276,43 @@ int32_t Audio::mp3_correctResumeFilePos() {
 }
 //****************************************************************************************
 uint8_t Audio::determineOggCodec(uint8_t* data, uint16_t len) {
-    // if we have contentType == application/ogg; codec cn be OPUS, FLAC or VORBIS
-    // let's have a look, what it is
-    int idx = specialIndexOf(data, "OggS", 6);
-    if(idx != 0) {
-        if(specialIndexOf(data, "fLaC", 6) == 0) return CODEC_FLAC;
+    // Robust OGG codec detection per Rec48 - handles Ogg-FLAC with 0x7F 'FLAC'
+    if(len < 27) return CODEC_NONE;
+    if(memcmp(data, "OggS", 4) != 0) {
+        // fallback: old logic for fLaC at pos0 (native FLAC over mislabelled OGG?)
+        if(len >= 4 && specialIndexOf(data, "fLaC", 6) == 0) return CODEC_FLAC;
         return CODEC_NONE;
     }
-    data += 27;
-    idx = specialIndexOf(data, "OpusHead", 40);
-    if(idx >= 0) { return CODEC_OPUS; }
-    idx = specialIndexOf(data, "fLaC", 40);
-    if(idx >= 0) { return CODEC_FLAC; }
-    idx = specialIndexOf(data, "vorbis", 40);
-    if(idx >= 0) { return CODEC_VORBIS; }
+    uint8_t segs = data[26];
+    if(len < (uint16_t)(27 + segs + 8)) return CODEC_NONE; // need at least header + first packet sig
+    uint32_t pkt = 27 + segs;
+
+    static const uint8_t SIG_OPUS[] = {'O','p','u','s','H','e','a','d'};
+    static const uint8_t SIG_VORB[] = {0x01,'v','o','r','b','i','s'};
+    static const uint8_t SIG_FLAC[] = {0x7F,'F','L','A','C'}; // Ogg-FLAC mapping
+
+    if(len >= pkt + sizeof(SIG_OPUS) && memcmp(data + pkt, SIG_OPUS, sizeof(SIG_OPUS)) == 0) return CODEC_OPUS;
+    if(len >= pkt + sizeof(SIG_VORB) && memcmp(data + pkt, SIG_VORB, sizeof(SIG_VORB)) == 0) return CODEC_VORBIS;
+    if(len >= pkt + sizeof(SIG_FLAC) && memcmp(data + pkt, SIG_FLAC, sizeof(SIG_FLAC)) == 0) return CODEC_FLAC;
+
+    // Fallback soft search within 512 bytes from pkt (handles extra headers)
+    uint32_t searchEnd = pkt + 512;
+    if(searchEnd > len) searchEnd = len;
+    // search for OpusHead
+    for(uint32_t i = pkt; i + sizeof(SIG_OPUS) <= searchEnd; i++){
+        if(memcmp(data + i, SIG_OPUS, sizeof(SIG_OPUS)) == 0) return CODEC_OPUS;
+    }
+    for(uint32_t i = pkt; i + sizeof(SIG_VORB) <= searchEnd; i++){
+        if(memcmp(data + i, SIG_VORB, sizeof(SIG_VORB)) == 0) return CODEC_VORBIS;
+    }
+    for(uint32_t i = pkt; i + sizeof(SIG_FLAC) <= searchEnd; i++){
+        if(memcmp(data + i, SIG_FLAC, sizeof(SIG_FLAC)) == 0) return CODEC_FLAC;
+    }
+    // also check plain "fLaC" for native FLAC if wrapped oddly
+    for(uint32_t i = pkt; i + 4 <= searchEnd; i++){
+        if(memcmp(data + i, "fLaC", 4) == 0) return CODEC_FLAC;
+    }
+
     return CODEC_NONE;
 }
 //****************************************************************************************
