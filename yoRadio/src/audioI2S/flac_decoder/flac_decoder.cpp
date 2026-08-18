@@ -241,6 +241,24 @@ int32_t FLACparseOGG(uint8_t *inbuf, int32_t *bytesLeft){  // reference https://
     int32_t idx = FLAC_specialIndexOf(inbuf, "OggS", 6);
     if(idx != 0){FLAC_LOG_ERROR("Flac decoder asyncron, \"OggS\" not found"); return FLAC_ERR;}
 
+    // Need at least fixed Ogg page header (27 bytes) to read pageSegments
+    if(*bytesLeft < 27) return FLAC_PARSE_OGG_DONE;
+    uint8_t pageSegments = inbuf[26];
+    uint32_t headerSize = 27U + (uint32_t)pageSegments;
+    // Need full segment table
+    if(*bytesLeft < (int32_t)headerSize) return FLAC_PARSE_OGG_DONE;
+
+    // Sum body size and require full page payload present
+    uint32_t pageBodyBytes = 0;
+    for(uint32_t i = 0; i < pageSegments; i++){
+        pageBodyBytes += *(inbuf + 27 + i);
+    }
+    if(pageBodyBytes > FLAC_MAX_OGG_SEGMENT){
+        FLAC_LOG_ERROR("OGG page body too large: %u", (unsigned)pageBodyBytes);
+        return FLAC_STOP;
+    }
+    if(*bytesLeft < (int32_t)(headerSize + pageBodyBytes)) return FLAC_PARSE_OGG_DONE;
+
     uint8_t  version            = *(inbuf +  4); (void) version;
     uint8_t  headerType         = *(inbuf +  5); (void) headerType;
     uint64_t granulePosition    = (uint64_t)*(inbuf + 13) << 56;  // granule_position: an 8 Byte field containing -
@@ -263,7 +281,6 @@ int32_t FLACparseOGG(uint8_t *inbuf, int32_t *bytesLeft){  // reference https://
              CRCchecksum       += *(inbuf + 24) << 16;
              CRCchecksum       += *(inbuf + 23) << 8;
              CRCchecksum       += *(inbuf + 22); (void) CRCchecksum;
-    uint8_t  pageSegments       = *(inbuf + 26);        // giving the number of segment entries
 
     // read the segment table (contains pageSegments bytes),  1...251: Length of the frame in bytes,
     // 255: A second byte is needed.  The total length is first_byte + second byte
@@ -289,8 +306,6 @@ int32_t FLACparseOGG(uint8_t *inbuf, int32_t *bytesLeft){  // reference https://
     // FLAC_LOG_INFO("firstPage %i, continuedPage %i, lastPage %i", firstPage, continuedPage, lastPage);
 
     if(firstPage) s_flacPageNr = 0;
-
-    uint32_t headerSize = pageSegments + 27;
 
     *bytesLeft -= headerSize;
     s_flacCurrentFilePos += headerSize;
@@ -691,8 +706,6 @@ int8_t FLACDecodeNative(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){
                 // clamp
                 if(val > 32767) val = 32767;
                 if(val < -32768) val = -32768;
-                // special case for 8-bit unsigned
-                if(FLACMetadataBlock->bitsPerSample == 8) val += 128;
                 outbuf[2*i+j] = (int16_t)val;
             }
         }
