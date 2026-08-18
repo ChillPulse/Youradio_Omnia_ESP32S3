@@ -4034,11 +4034,19 @@ bool Audio::stallReconnect(const char* reason){
 //****************************************************************************************
 void Audio::processWebStream() {
     if(m_dataMode != AUDIO_DATA) return; // guard
-    // watchdog for decode stall / resync storm (Rec36/37/40/41/42) - faster 900ms / >6
-    uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
-    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 900) && m_resyncSkipCnt > 6){
-        stallReconnect("webstream");
-        return;
+    // watchdog for decode stall / resync storm (Rec46) - grace period + faster reconnect
+    const uint32_t GRACE_MS = 4000; // allow decoder to lock on stream after connect
+    uint32_t now = millis();
+    if(m_f_stream){
+        if(m_lastGoodDecodeMs == 0 && m_lastConnectOkMs && (now - m_lastConnectOkMs) < GRACE_MS){
+            // do nothing during grace window
+        } else {
+            uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
+            if(InBuff.bufferFilled() > 60000 && ref && (now - ref > 900) && m_resyncSkipCnt > 6){
+                stallReconnect("webstream");
+                return;
+            }
+        }
     }
     uint16_t readedBytes = 0;
 
@@ -4102,15 +4110,32 @@ void Audio::processWebStream() {
     }
 
     // start audio decoding - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(InBuff.bufferFilled() > m_pwst.maxFrameSize && !m_f_stream) { // waiting for buffer filled
-        if(m_codec == CODEC_OGG) { // AUDIO_INFO("determine correct codec here");
+    // Rec46 C: soft prebuffer for OGG/Opus/Vorbis to avoid early stutter, configurable via myoptions.h
+#ifndef OMNIA_OGG_PREBUFFER
+    const uint32_t PREBUFFER = 24000; // ~1.5s at 128kbps
+#else
+    const uint32_t PREBUFFER = OMNIA_OGG_PREBUFFER;
+#endif
+    // early init decoder as soon as we have enough to detect codec (OGG case)
+    if(!m_f_stream && InBuff.bufferFilled() > m_pwst.maxFrameSize) {
+        if(m_codec == CODEC_OGG) {
             uint8_t codec = determineOggCodec(InBuff.getReadPtr(), m_pwst.maxFrameSize);
             if(codec == CODEC_FLAC) {initializeDecoder(codec); m_codec = codec; AUDIO_INFO("format is flac");}
             if(codec == CODEC_OPUS) {initializeDecoder(codec); m_codec = codec; AUDIO_INFO("format is opus");}
             if(codec == CODEC_VORBIS) {initializeDecoder(codec); m_codec = codec; AUDIO_INFO("format is vorbis");}
         }
-        AUDIO_INFO("stream ready");
+    }
+    // start decoding only after prebuffer (for OGG it helps avoid clicks, for others also safe)
+    if(!m_f_stream && InBuff.bufferFilled() > PREBUFFER) {
+        AUDIO_INFO("stream ready (ogg prebuffer=%lu)", (unsigned long)PREBUFFER);
         m_f_stream = true;  // ready to play the audio data
+    } else if(!m_f_stream && m_codec != CODEC_OGG && m_codec != CODEC_FLAC && m_codec != CODEC_OPUS && m_codec != CODEC_VORBIS && InBuff.bufferFilled() > m_pwst.maxFrameSize) {
+        // fallback for MP3/AAC etc if PREBUFFER larger than needed but we already have maxFrameSize
+        // keep original behavior for non-OGG when PREBUFFER not yet reached but we have enough for MP3
+        if(InBuff.bufferFilled() > m_pwst.maxFrameSize) {
+            AUDIO_INFO("stream ready");
+            m_f_stream = true;
+        }
     }
 
     if(m_f_eof) {
@@ -4121,11 +4146,19 @@ void Audio::processWebStream() {
 //****************************************************************************************
 void Audio::processWebFile() {
     if(!m_lastHost.valid()) {AUDIO_ERROR("m_lastHost is empty"); return;}  // guard
-    // watchdog for decode stall / resync storm (Rec36/37/40/41/42) - faster 900ms / >6
-    uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
-    if(m_f_stream && InBuff.bufferFilled() > InBuff.getMaxBlockSize() * 2 && ref && (millis() - ref > 900) && m_resyncSkipCnt > 6){
-        stallReconnect("webfile");
-        return;
+    // watchdog for decode stall / resync storm (Rec46) - grace period + faster reconnect
+    const uint32_t GRACE_MS = 4000;
+    uint32_t now = millis();
+    if(m_f_stream){
+        if(m_lastGoodDecodeMs == 0 && m_lastConnectOkMs && (now - m_lastConnectOkMs) < GRACE_MS){
+            // do nothing
+        } else {
+            uint32_t ref = m_lastGoodDecodeMs ? m_lastGoodDecodeMs : m_lastConnectOkMs;
+            if(InBuff.bufferFilled() > 60000 && ref && (now - ref > 900) && m_resyncSkipCnt > 6){
+                stallReconnect("webfile");
+                return;
+            }
+        }
     }
     m_pwf.maxFrameSize = InBuff.getMaxBlockSize();        // every frame is not bigger
     uint32_t availableBytes = 0;
@@ -5519,7 +5552,8 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
         if(m_sbyt.nextSync <  0) return len; // no syncword found
         if(m_sbyt.nextSync == 0) { m_f_playing = true; }
         if(m_sbyt.nextSync >  0) {
-            m_resyncSkipCnt++;
+            // Do not treat initial OGG lock-on as "stall" (Rec46 A)
+            if(m_lastGoodDecodeMs) m_resyncSkipCnt++;
             return m_sbyt.nextSync;
         }
     }
