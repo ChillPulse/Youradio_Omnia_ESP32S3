@@ -557,12 +557,10 @@ int8_t FLACDecode(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){ //  MAIN
 
     int32_t                ret = 0;
     uint32_t           segmLen = 0;
-    static uint32_t segmLenTmp = 0;
 
     if(s_f_flacFirstCall){ // determine if ogg or flag
         s_f_flacFirstCall = false;
         s_nBytes = 0;
-        segmLenTmp = 0;
         if(FLAC_specialIndexOf(inbuf, "OggS", 5) == 0){
             s_f_oggWrapper = true;
             s_f_flacParseOgg = true;
@@ -570,20 +568,6 @@ int8_t FLACDecode(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){ //  MAIN
     }
 
     if(s_f_oggWrapper){
-
-        if(segmLenTmp){ // can't skip more than 16K
-            if(segmLenTmp > FLAC_MAX_BLOCKSIZE){
-                s_flacCurrentFilePos += FLAC_MAX_BLOCKSIZE;
-                *bytesLeft -= FLAC_MAX_BLOCKSIZE;
-                segmLenTmp -= FLAC_MAX_BLOCKSIZE;
-            }
-            else{
-                s_flacCurrentFilePos += segmLenTmp;
-                *bytesLeft -= segmLenTmp;
-                segmLenTmp  = 0;
-            }
-            return FLAC_PARSE_OGG_DONE;
-        }
 
         if(s_nBytes > 0){
             int16_t diff = s_nBytes;
@@ -657,10 +641,6 @@ int8_t FLACDecode(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){ //  MAIN
                 return FLAC_PARSE_OGG_DONE;
                 break;
         }
-        if(segmLen > FLAC_MAX_BLOCKSIZE){
-            segmLenTmp = segmLen;
-            return FLAC_PARSE_OGG_DONE;
-        }
         *bytesLeft -= segmLen;
         s_flacCurrentFilePos += segmLen;
         return ret;
@@ -682,7 +662,7 @@ int8_t FLACDecodeNative(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){
     while(s_flacStatus == DECODE_FRAME){// Read a ton of header fields, and ignore most of them
         int32_t ret = flacDecodeFrame (inbuf, bytesLeft);
         if(ret != 0) return ret;
-        if(*bytesLeft < FLAC_MAX_BLOCKSIZE) return FLAC_DECODE_FRAMES_LOOP; // need more data
+        if(*bytesLeft < 512) return FLAC_DECODE_FRAMES_LOOP; // need more data (was FLAC_MAX_BLOCKSIZE, too harsh)
         sbl += bl - *bytesLeft;
     }
 
@@ -704,8 +684,16 @@ int8_t FLACDecodeNative(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){
         for (int32_t i = 0; i < blockSize; i++) {
             for (int32_t j = 0; j < FLACMetadataBlock->numChannels; j++) {
                 int32_t val = s_samplesBuffer[j][i + s_offset];
-                if (FLACMetadataBlock->bitsPerSample == 8) val += 128;
-                outbuf[2*i+j] = val;
+                // scale to 16-bit output
+                int shift = 16 - (int)FLACMetadataBlock->bitsPerSample;
+                if(shift > 0) val <<= shift;
+                else if(shift < 0) val >>= (-shift);
+                // clamp
+                if(val > 32767) val = 32767;
+                if(val < -32768) val = -32768;
+                // special case for 8-bit unsigned
+                if(FLACMetadataBlock->bitsPerSample == 8) val += 128;
+                outbuf[2*i+j] = (int16_t)val;
             }
         }
 
@@ -757,8 +745,8 @@ int8_t flacDecodeFrame(uint8_t *inbuf, int32_t *bytesLeft){
         if(FLACFrameHeader->sampleSizeCode == 5) FLACMetadataBlock->bitsPerSample = 20;
         if(FLACFrameHeader->sampleSizeCode == 6) FLACMetadataBlock->bitsPerSample = 24;
     }
-    if(FLACMetadataBlock->bitsPerSample > 16) {FLAC_LOG_ERROR("Flac, bits per sample > 16, bps: %i", FLACMetadataBlock->bitsPerSample); return FLAC_STOP;}
     if(FLACMetadataBlock->bitsPerSample < 8 ) {FLAC_LOG_ERROR("Flac, bits per sample <8, bps: %i", FLACMetadataBlock->bitsPerSample); return FLAC_STOP;}
+    if(FLACMetadataBlock->bitsPerSample > 32) {FLAC_LOG_ERROR("Flac, bits per sample > 32, bps: %i", FLACMetadataBlock->bitsPerSample); return FLAC_STOP;}
     if(!FLACMetadataBlock->sampleRate){
         if(FLACFrameHeader->sampleRateCode == 1)  FLACMetadataBlock->sampleRate =  88200;
         if(FLACFrameHeader->sampleRateCode == 2)  FLACMetadataBlock->sampleRate = 176400;

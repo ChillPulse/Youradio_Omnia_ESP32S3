@@ -7,8 +7,8 @@
  *      Author: wolle
  *
  *  Restrictions:
- *  blocksize must not exceed 24576 bytes
- *  bits per sample must be 8 or 16
+ *  blocksize must not exceed 32768 samples
+ *  bits per sample must be 8, 16, 24 or 32 (24/32 downconverted to 16 output)
  *  num Channels must be 1 or 2
  *
  *
@@ -22,7 +22,8 @@
 using namespace std;
 
 #define FLAC_MAX_CHANNELS 2
-#define FLAC_MAX_BLOCKSIZE 24576  // 24 * 1024
+#define FLAC_MAX_BLOCKSIZE 32768
+#define FLAC_MAX_OGG_SEGMENT 65535
 #define FLAC_MAX_OUTBUFFSIZE 4096 * 2
 
 enum : uint8_t {FLACDECODER_INIT, FLACDECODER_READ_IN, FLACDECODER_WRITE_OUT};
