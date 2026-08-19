@@ -51,6 +51,9 @@ std::vector<ps_ptr<int32_t>> s_samplesBuffer;
 uint16_t         s_maxBlocksize = FLAC_MAX_BLOCKSIZE;
 int32_t          s_nBytes = 0;
 static uint32_t  s_oggPendingPacketLen = 0;
+static uint32_t  s_segmLength = 0;
+static bool      s_continued_page = false;
+static bool      s_first_flac_frame = false;
 
 //----------------------------------------------------------------------------------------------------------------------
 //          FLAC INI SECTION
@@ -131,6 +134,9 @@ void FLACDecoder_setDefaults(){
     s_f_bitReaderError = false;
     s_nBytes = 0;
     s_oggPendingPacketLen = 0;
+    s_segmLength = 0;
+    s_continued_page = false;
+    s_first_flac_frame = false;
 }
 //----------------------------------------------------------------------------------------------------------------------
 //            B I T R E A D E R
@@ -146,7 +152,36 @@ uint32_t readUint(uint8_t nBits, int32_t *bytesLeft){
         uint8_t temp = *(s_flacInptr + s_rIndex);
         s_rIndex++;
         (*bytesLeft)--;
-        if(*bytesLeft < 0) { FLAC_LOG_ERROR("error in bitreader"); s_f_bitReaderError = true; break;}
+        if(*bytesLeft == -1){
+            if(s_f_oggWrapper){
+                // step back: we hit boundary, check for next Ogg page
+                s_rIndex--;
+                (*bytesLeft)++;
+                if(FLAC_specialIndexOf(s_flacInptr + s_rIndex, "OggS", 4) == 0){
+                    // parse next ogg page header+segment table; bytesLeft will become negative by headerSize
+                    int32_t pret = FLACparseOGG(s_flacInptr + s_rIndex, bytesLeft);
+                    if(pret < 0){ s_f_bitReaderError = true; break; }
+                    // take first seg length from new page
+                    if(s_flacSegmTableVec.size()){
+                        s_segmLength = s_flacSegmTableVec.back();
+                        s_flacSegmTableVec.pop_back();
+                        s_f_flacParseOgg = false;
+                    }
+                    // skip over Ogg header bytes (bytesLeft is negative now)
+                    s_rIndex += abs(*bytesLeft);
+                    continue;
+                } else {
+                    FLAC_LOG_ERROR("error in bitreader");
+                    s_f_bitReaderError = true;
+                    break;
+                }
+            }
+        }
+        if(*bytesLeft < 0){
+            FLAC_LOG_ERROR("error in bitreader");
+            s_f_bitReaderError = true;
+            break;
+        }
         s_flac_bitBuffer = (s_flac_bitBuffer << 8) | temp;
         s_flacBitBufferLen += 8;
     }
@@ -262,6 +297,7 @@ int32_t FLACparseOGG(uint8_t *inbuf, int32_t *bytesLeft){  // reference https://
 
     uint8_t  version            = inbuf[4]; (void) version;
     uint8_t  headerType         = inbuf[5]; (void) headerType;
+    s_continued_page = (headerType & 0x01);
     uint64_t granulePosition    = (uint64_t)inbuf[13] << 56;
              granulePosition   += (uint64_t)inbuf[12] << 48;
              granulePosition   += (uint64_t)inbuf[11] << 40;
@@ -613,6 +649,7 @@ int8_t FLACDecode(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){ //  MAIN
         if(*bytesLeft < (int32_t)segmLen){
             return FLAC_PARSE_OGG_DONE;
         }
+        s_segmLength = segmLen;
         s_flacSegmTableVec.pop_back();
         if(!s_flacSegmTableVec.size()) s_f_flacParseOgg = true;
         //-------------------------------------------------------
@@ -660,6 +697,7 @@ int8_t FLACDecode(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){ //  MAIN
                 break;
             case 2:
                 s_nBytes = segmLen;
+                s_first_flac_frame = true;
                 return FLAC_PARSE_OGG_DONE;
                 break;
         }
@@ -745,6 +783,16 @@ int8_t flacDecodeFrame(uint8_t *inbuf, int32_t *bytesLeft){
         FLACDecoderReset();
         s_flacPageNr = 2;
         return FLAC_OGG_SYNC_FOUND;
+    }
+    if(inbuf[0] != 0xFF || (inbuf[1] & 0xFC) != 0xF8){
+        if(s_first_flac_frame && s_continued_page){
+            // remains of previous frame interrupted by OGG boundary; skip this segment and continue
+            s_first_flac_frame = false;
+            *bytesLeft -= (int32_t)s_segmLength;
+            return FLAC_NONE;
+        }
+        FLAC_LOG_ERROR("Sync 0xFFF8 not found");
+        return FLAC_ERR;
     }
     readUint(14 + 1, bytesLeft); // synccode + reserved bit
     FLACFrameHeader->blockingStrategy = readUint(1, bytesLeft);
