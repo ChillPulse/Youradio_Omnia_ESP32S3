@@ -25,6 +25,9 @@
 #include "vorbis_decoder/vorbis_decoder.h"
 #include "psram_unique_ptr.hpp"
 #include <limits.h> // for UINT16_MAX
+#include "micro_flac/micro_flac/flac_decoder.h"
+
+static micro_flac::FLACDecoder g_mf;
 
 // constants
 constexpr size_t    m_frameSizeWav       = 4096;
@@ -369,6 +372,7 @@ void Audio::zeroI2Sbuff(){
 //****************************************************************************************
 void Audio::setDefaults() {
     stopSong();
+    microflac_reset_();
     initInBuff(); // initialize InputBuffer if not already done
     InBuff.resetBuffer();
     MP3Decoder_FreeBuffers();
@@ -3979,6 +3983,12 @@ void Audio::processLocalFile() {
             m_f_stream = true;
             AUDIO_INFO("stream ready");
         }
+        // WEB FLAC late activation for native FLAC
+        if(m_f_stream && m_codec == CODEC_FLAC && (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE) && !m_mf_active){
+            microflac_reset_();
+            m_mf_active = true;
+            AUDIO_INFO("format is flac (micro-flac WEB) - late activation webfile");
+        }
     }
 
 /*    if(m_fileStartTime > 0 && m_nominal_bitrate){
@@ -4047,6 +4057,19 @@ bool Audio::stallReconnect(const char* reason){
     stopSong(); // корректно закрывает client/clientsecure и сбрасывает состояния
     InBuff.resetBuffer(); // на всякий случай
     return connecttohost(url.get());
+}
+void Audio::microflac_reset_(){
+    m_mf_active = false;
+    m_mf_header_ready = false;
+    m_mf_sample_rate = 0;
+    m_mf_channels = 0;
+    m_mf_bits = 0;
+    if(m_mf_out32){
+        free(m_mf_out32);
+        m_mf_out32 = nullptr;
+    }
+    m_mf_out32_cap = 0;
+    g_mf.reset();
 }
 //****************************************************************************************
 void Audio::processWebStream() {
@@ -4145,7 +4168,16 @@ void Audio::processWebStream() {
     if(!m_f_stream && InBuff.bufferFilled() > m_pwst.maxFrameSize) {
         if(m_codec == CODEC_OGG) {
             uint8_t codec = determineOggCodec(InBuff.getReadPtr(), m_pwst.maxFrameSize);
-            if(codec == CODEC_FLAC) {initializeDecoder(codec); m_codec = codec; AUDIO_INFO("format is flac");}
+            if(codec == CODEC_FLAC) {
+                if(m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE){
+                    microflac_reset_();
+                    m_mf_active = true;
+                    m_codec = CODEC_FLAC;
+                    AUDIO_INFO("format is flac (micro-flac WEB)");
+                } else {
+                    initializeDecoder(codec); m_codec = codec; AUDIO_INFO("format is flac");
+                }
+            }
             if(codec == CODEC_OPUS) {initializeDecoder(codec); m_codec = codec; AUDIO_INFO("format is opus");}
             if(codec == CODEC_VORBIS) {initializeDecoder(codec); m_codec = codec; AUDIO_INFO("format is vorbis");}
         }
@@ -4161,6 +4193,13 @@ void Audio::processWebStream() {
             AUDIO_INFO("stream ready");
             m_f_stream = true;
         }
+    }
+
+    // WEB FLAC late activation for native FLAC (not Ogg) - ensure micro-flac backend for radio
+    if(m_f_stream && m_codec == CODEC_FLAC && (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE) && !m_mf_active){
+        microflac_reset_();
+        m_mf_active = true;
+        AUDIO_INFO("format is flac (micro-flac WEB) - late activation");
     }
 
     if(m_f_eof) {
@@ -4230,7 +4269,17 @@ void Audio::processWebFile() {
     if(!m_f_stream) {
         if(m_codec == CODEC_OGG) { // AUDIO_ERROR("determine correct codec here");
             uint8_t codec = determineOggCodec(InBuff.getReadPtr(), m_pwf.maxFrameSize);
-            if     (codec == CODEC_FLAC)   {initializeDecoder(codec); m_codec = CODEC_FLAC; AUDIO_INFO("format is flac");   return;}
+            if(codec == CODEC_FLAC){
+                if(m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE){
+                    microflac_reset_();
+                    m_mf_active = true;
+                    m_codec = CODEC_FLAC;
+                    AUDIO_INFO("format is flac (micro-flac WEB)");
+                    return;
+                } else {
+                    initializeDecoder(codec); m_codec = CODEC_FLAC; AUDIO_INFO("format is flac"); return;
+                }
+            }
             else if(codec == CODEC_OPUS)   {initializeDecoder(codec); m_codec = CODEC_OPUS; AUDIO_INFO("format is opus");   return;}
             else if(codec == CODEC_VORBIS) {initializeDecoder(codec); m_codec = CODEC_VORBIS; AUDIO_INFO("format is vorbis"); return;}
             else                           {stopSong(); return;}
@@ -4260,6 +4309,12 @@ void Audio::processWebFile() {
         else {
             m_f_stream = true;
             AUDIO_INFO("stream ready");
+        }
+        // WEB FLAC late activation for native FLAC
+        if(m_f_stream && m_codec == CODEC_FLAC && (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE) && !m_mf_active){
+            microflac_reset_();
+            m_mf_active = true;
+            AUDIO_INFO("format is flac (micro-flac WEB) - late activation webfile");
         }
     }
 
@@ -5607,7 +5662,116 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
         case CODEC_MP3:    res = MP3Decode(   data, &m_sbyt.bytesLeft, m_outBuff.get()); break;
         case CODEC_AAC:    res = AACDecode(   data, &m_sbyt.bytesLeft, m_outBuff.get()); break;
         case CODEC_M4A:    res = AACDecode(   data, &m_sbyt.bytesLeft, m_outBuff.get()); break;
-        case CODEC_FLAC:   res = FLACDecode(  data, &m_sbyt.bytesLeft, m_outBuff.get()); break;
+        case CODEC_FLAC: {
+            bool isWeb = (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE);
+            if(isWeb){
+                // WEB FLAC -> micro-flac backend (radio only)
+                if(!m_mf_active){
+                    microflac_reset_();
+                    m_mf_active = true;
+                    if(!m_mf_out32){
+                        m_mf_out32_cap = 8192 * 2;
+                        m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap * sizeof(int32_t));
+                        if(!m_mf_out32){
+                            m_mf_out32_cap = 4096 * 2;
+                            m_mf_out32 = (int32_t*) malloc(m_mf_out32_cap * sizeof(int32_t));
+                        }
+                    }
+                }
+                size_t bytes_consumed = 0;
+                size_t samples_decoded = 0;
+                if(!m_mf_out32){
+                    m_mf_out32_cap = 8192 * 2;
+                    m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap * sizeof(int32_t));
+                }
+                auto mf_res = g_mf.decode(data, len, m_mf_out32, m_mf_out32_cap, bytes_consumed, samples_decoded);
+                if(mf_res == micro_flac::FLAC_DECODER_HEADER_READY){
+                    const auto& info = g_mf.get_stream_info();
+                    m_mf_sample_rate = info.sample_rate();
+                    m_mf_channels = info.num_channels();
+                    m_mf_bits = info.bits_per_sample();
+                    m_mf_header_ready = true;
+                    setChannels(m_mf_channels);
+                    setSampleRate(m_mf_sample_rate);
+                    setBitsPerSample(m_mf_bits);
+                    size_t needed = info.max_block_size() * info.num_channels();
+                    if(needed > m_mf_out32_cap){
+                        free(m_mf_out32);
+                        m_mf_out32_cap = needed;
+                        m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap * sizeof(int32_t));
+                        if(!m_mf_out32){
+                            m_mf_out32 = (int32_t*) malloc(m_mf_out32_cap * sizeof(int32_t));
+                        }
+                    }
+                    m_sbyt.bytesLeft = len - bytes_consumed;
+                    bytesDecoded = bytes_consumed;
+                    res = 0;
+                    break;
+                } else if(mf_res == micro_flac::FLAC_DECODER_SUCCESS){
+                    size_t total = samples_decoded;
+                    int bps = m_mf_bits ? m_mf_bits : 16;
+                    size_t maxOut = m_outbuffSize;
+                    if(total > maxOut) total = maxOut;
+                    for(size_t i=0;i<total;i++){
+                        int32_t v = m_mf_out32[i];
+                        if(bps < 32) v >>= (32 - bps);
+                        if(bps > 16) v >>= (bps - 16);
+                        else if(bps < 16) v <<= (16 - bps);
+                        if(v > 32767) v = 32767;
+                        if(v < -32768) v = -32768;
+                        m_outBuff[i] = (int16_t)v;
+                    }
+                    m_validSamples = samples_decoded / (m_mf_channels ? m_mf_channels : 2);
+                    if(total < samples_decoded){
+                        m_validSamples = total / (m_mf_channels ? m_mf_channels : 2);
+                    }
+                    m_sbyt.bytesLeft = len - bytes_consumed;
+                    bytesDecoded = bytes_consumed;
+                    res = 0;
+                    // handle validSamples path similar to original
+                    if(m_sbyt.f_setDecodeParamsOnce && m_validSamples){
+                        m_sbyt.f_setDecodeParamsOnce = false;
+                        setDecoderItems();
+                        m_PlayingStartTime = millis();
+                    }
+                    if(!m_validSamples){
+                        break;
+                    }
+                    uint16_t bytesDecoderOut = m_validSamples;
+                    if(m_channels == 2) bytesDecoderOut /= 2;
+                    if(m_bitsPerSample == 16) bytesDecoderOut *= 2;
+                    calculateAudioTime(bytesDecoded, bytesDecoderOut);
+                    if(m_validSamples){
+                        playChunk();
+                        m_lastGoodDecodeMs = millis();
+                        m_resyncSkipCnt = 0;
+                        m_stallReconnectTries = 0;
+                    }
+                    return bytesDecoded;
+                } else if(mf_res == micro_flac::FLAC_DECODER_NEED_MORE_DATA){
+                    m_sbyt.bytesLeft = len - bytes_consumed;
+                    bytesDecoded = bytes_consumed;
+                    res = 100;
+                    break;
+                } else if(mf_res == micro_flac::FLAC_DECODER_END_OF_STREAM){
+                    m_f_eof = true;
+                    m_sbyt.bytesLeft = len - bytes_consumed;
+                    bytesDecoded = bytes_consumed;
+                    res = 0;
+                    break;
+                } else {
+                    AUDIO_ERROR("microflac decode error %d", (int)mf_res);
+                    m_sbyt.bytesLeft = len - bytes_consumed;
+                    bytesDecoded = bytes_consumed ? bytes_consumed : 1;
+                    res = -1;
+                    break;
+                }
+            } else {
+                // SD FLAC stays on old decoder
+                res = FLACDecode(data, &m_sbyt.bytesLeft, m_outBuff.get());
+            }
+            break;
+        }
         case CODEC_OPUS:   res = OPUSDecode(  data, &m_sbyt.bytesLeft, m_outBuff.get()); break;
         case CODEC_VORBIS: res = VORBISDecode(data, &m_sbyt.bytesLeft, m_outBuff.get()); break;
         default: {

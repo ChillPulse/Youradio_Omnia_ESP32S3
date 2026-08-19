@@ -228,6 +228,7 @@ class Audio{
     void         processWebStream();
     void         processWebFile();
     bool         stallReconnect(const char* reason);
+    void         microflac_reset_();
     void         processWebStreamTS();
     void         processWebStreamHLS();
     void         playAudioData();
@@ -742,6 +743,14 @@ private:
     uint32_t        m_lastConnectOkMs = 0;
     uint32_t        m_flacStallWindowMs = 0;
     uint8_t         m_flacStallWindowCnt = 0;
+    // --- micro-flac WEB backend (radio only) ---
+    bool            m_mf_active = false;
+    bool            m_mf_header_ready = false;
+    uint32_t        m_mf_sample_rate = 0;
+    uint8_t         m_mf_channels = 0;
+    uint8_t         m_mf_bits = 0;
+    int32_t*        m_mf_out32 = nullptr;
+    size_t          m_mf_out32_cap = 0;
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;
