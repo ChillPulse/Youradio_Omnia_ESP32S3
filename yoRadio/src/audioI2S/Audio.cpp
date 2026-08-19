@@ -5727,7 +5727,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     setChannels(m_mf_channels);
                     setSampleRate(m_mf_sample_rate);
                     setBitsPerSample(m_mf_bits);
-                    size_t needed = info.max_block_size() * info.num_channels();
+                    size_t needed = g_mf.get_output_buffer_size_samples(); // interleaved samples = max_block_size * channels
                     if(needed > m_mf_out32_cap){
                         free(m_mf_out32);
                         m_mf_out32_cap = needed;
