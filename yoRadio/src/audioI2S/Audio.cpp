@@ -4030,17 +4030,22 @@ bool Audio::stallReconnect(const char* reason){
     if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 600) return false;
     m_lastStallReconnectMs = millis();
     // FLAC-specific fail-fast: if FLAC stalls twice within 30s, stop instead of endless reconnects
+    // But for micro-flac WEB, allow recovery - do not fail-fast aggressively
     if(m_codec == CODEC_FLAC){
-        uint32_t now = millis();
-        if(!m_flacStallWindowMs || (now - m_flacStallWindowMs) > 30000){
-            m_flacStallWindowMs = now;
-            m_flacStallWindowCnt = 0;
-        }
-        m_flacStallWindowCnt++;
-        if(m_flacStallWindowCnt >= 2){
-            AUDIO_ERROR("Unstable OGG-FLAC stream -> stop (reason=%s)", reason);
-            stopSong();
-            return true;
+        if(m_mf_active){
+            // skip fail-fast for micro-flac WEB - allow more recovery attempts
+        } else {
+            uint32_t now = millis();
+            if(!m_flacStallWindowMs || (now - m_flacStallWindowMs) > 30000){
+                m_flacStallWindowMs = now;
+                m_flacStallWindowCnt = 0;
+            }
+            m_flacStallWindowCnt++;
+            if(m_flacStallWindowCnt >= 2){
+                AUDIO_ERROR("Unstable OGG-FLAC stream -> stop (reason=%s)", reason);
+                stopSong();
+                return true;
+            }
         }
     }
     m_stallReconnectTries++;
@@ -5702,22 +5707,18 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                 if(!m_mf_active){
                     microflac_reset_();
                     m_mf_active = true;
-                    if(!m_mf_out32){
-                        m_mf_out32_cap = 8192 * 2;
-                        m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap * sizeof(int32_t));
-                        if(!m_mf_out32){
-                            m_mf_out32_cap = 4096 * 2;
-                            m_mf_out32 = (int32_t*) malloc(m_mf_out32_cap * sizeof(int32_t));
-                        }
-                    }
                 }
                 size_t bytes_consumed = 0;
                 size_t samples_decoded = 0;
-                if(!m_mf_out32){
-                    m_mf_out32_cap = 8192 * 2;
-                    m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap * sizeof(int32_t));
+                int32_t* out = nullptr;
+                size_t out_cap = 0;
+                if(m_mf_header_ready && m_mf_out32 && m_mf_out32_cap){
+                    out = m_mf_out32;
+                    out_cap = m_mf_out32_cap;
                 }
-                auto mf_res = g_mf.decode(data, len, m_mf_out32, m_mf_out32_cap, bytes_consumed, samples_decoded);
+                // до HEADER_READY out может быть nullptr — это нормально по micro-flac API
+                // out may be nullptr before HEADER_READY - micro-flac API allows this
+                auto mf_res = g_mf.decode(data, len, out, out_cap, bytes_consumed, samples_decoded);
                 if(mf_res == micro_flac::FLAC_DECODER_HEADER_READY){
                     const auto& info = g_mf.get_stream_info();
                     m_mf_sample_rate = info.sample_rate();
@@ -5728,14 +5729,15 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     setSampleRate(m_mf_sample_rate);
                     setBitsPerSample(m_mf_bits);
                     size_t needed = g_mf.get_output_buffer_size_samples(); // interleaved samples = max_block_size * channels
-                    if(needed > m_mf_out32_cap){
-                        free(m_mf_out32);
-                        m_mf_out32_cap = needed;
-                        m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap * sizeof(int32_t));
-                        if(!m_mf_out32){
-                            m_mf_out32 = (int32_t*) malloc(m_mf_out32_cap * sizeof(int32_t));
-                        }
+                    free(m_mf_out32);
+                    m_mf_out32_cap = needed;
+                    m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap * sizeof(int32_t));
+                    if(!m_mf_out32){
+                        AUDIO_ERROR("microflac: out32 alloc failed (%u samples)", (unsigned)needed);
+                        stopSong();
+                        return -1;
                     }
+                    m_mf_header_ready = true;
                     m_sbyt.bytesLeft = len - bytes_consumed;
                     bytesDecoded = bytes_consumed;
                     res = 0;
