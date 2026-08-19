@@ -50,6 +50,7 @@ uint8_t          s_flacPageNr = 0;
 std::vector<ps_ptr<int32_t>> s_samplesBuffer;
 uint16_t         s_maxBlocksize = FLAC_MAX_BLOCKSIZE;
 int32_t          s_nBytes = 0;
+static uint32_t  s_oggPendingPacketLen = 0;
 
 //----------------------------------------------------------------------------------------------------------------------
 //          FLAC INI SECTION
@@ -84,7 +85,7 @@ void FLACDecoder_ClearBuffer(){
         s_samplesBuffer[i].zero_mem();
     }
 
-    s_flacSegmTableVec.clear(); s_flacSegmTableVec.shrink_to_fit();
+    s_flacSegmTableVec.clear(); s_flacSegmTableVec;
     s_flacStatus = DECODE_FRAME;
     return;
 }
@@ -95,16 +96,16 @@ void FLACDecoder_FreeBuffers(){
     s_flacStreamTitle.reset();
     s_flacVendorString.reset();
 
-    s_samplesBuffer.clear(); s_samplesBuffer.shrink_to_fit();
-    coefs.clear(); coefs.shrink_to_fit();
-    s_flacSegmTableVec.clear(); s_flacSegmTableVec.shrink_to_fit();
-    s_flacBlockPicItem.clear(); s_flacBlockPicItem.shrink_to_fit();
+    s_samplesBuffer.clear(); s_samplesBuffer;
+    coefs.clear(); coefs;
+    s_flacSegmTableVec.clear(); s_flacSegmTableVec;
+    s_flacBlockPicItem.clear(); s_flacBlockPicItem;
 }
 //----------------------------------------------------------------------------------------------------------------------
 void FLACDecoder_setDefaults(){
-    coefs.clear(); coefs.shrink_to_fit();
-    s_flacSegmTableVec.clear(); s_flacSegmTableVec.shrink_to_fit();
-    s_flacBlockPicItem.clear(); s_flacBlockPicItem.shrink_to_fit();
+    coefs.clear(); coefs;
+    s_flacSegmTableVec.clear(); s_flacSegmTableVec;
+    s_flacBlockPicItem.clear(); s_flacBlockPicItem;
     s_flac_bitBuffer = 0;
     s_flacBitrate = 0;
     s_flacBlockPicLenUntilFrameEnd = 0;
@@ -129,6 +130,7 @@ void FLACDecoder_setDefaults(){
     s_f_flacParseOgg = false;
     s_f_bitReaderError = false;
     s_nBytes = 0;
+    s_oggPendingPacketLen = 0;
 }
 //----------------------------------------------------------------------------------------------------------------------
 //            B I T R E A D E R
@@ -248,64 +250,65 @@ int32_t FLACparseOGG(uint8_t *inbuf, int32_t *bytesLeft){  // reference https://
     // Need full segment table
     if(*bytesLeft < (int32_t)headerSize) return FLAC_PARSE_OGG_DONE;
 
-    // Sum body size and require full page payload present
+    // Sum body size for sanity cap, but do NOT require full body yet (body will be waited via segmLen check in FLACDecode)
     uint32_t pageBodyBytes = 0;
     for(uint32_t i = 0; i < pageSegments; i++){
-        pageBodyBytes += *(inbuf + 27 + i);
+        pageBodyBytes += inbuf[27 + i];
     }
     if(pageBodyBytes > FLAC_MAX_OGG_SEGMENT){
         FLAC_LOG_ERROR("OGG page body too large: %u", (unsigned)pageBodyBytes);
         return FLAC_STOP;
     }
-    if(*bytesLeft < (int32_t)(headerSize + pageBodyBytes)) return FLAC_PARSE_OGG_DONE;
 
-    uint8_t  version            = *(inbuf +  4); (void) version;
-    uint8_t  headerType         = *(inbuf +  5); (void) headerType;
-    uint64_t granulePosition    = (uint64_t)*(inbuf + 13) << 56;  // granule_position: an 8 Byte field containing -
-             granulePosition   += (uint64_t)*(inbuf + 12) << 48;  // position information. For an audio stream, it MAY
-             granulePosition   += (uint64_t)*(inbuf + 11) << 40;  // contain the total number of PCM samples encoded
-             granulePosition   += (uint64_t)*(inbuf + 10) << 32;  // after including all frames finished on this page.
-             granulePosition   += *(inbuf +  9) << 24;  // This is a hint for the decoder and gives it some timing
-             granulePosition   += *(inbuf +  8) << 16;  // and position information. A special value of -1 (in two's
-             granulePosition   += *(inbuf +  7) << 8;   // complement) indicates that no packets finish on this page.
-             granulePosition   += *(inbuf +  6); (void) granulePosition;
-    uint32_t bitstreamSerialNr  = *(inbuf + 17) << 24;  // bitstream_serial_number: a 4 Byte field containing the
-             bitstreamSerialNr += *(inbuf + 16) << 16;  // unique serial number by which the logical bitstream
-             bitstreamSerialNr += *(inbuf + 15) << 8;   // is identified.
-             bitstreamSerialNr += *(inbuf + 14); (void) bitstreamSerialNr;
-    uint32_t pageSequenceNr     = *(inbuf + 21) << 24;  // page_sequence_number: a 4 Byte field containing the sequence
-             pageSequenceNr    += *(inbuf + 20) << 16;  // number of the page so the decoder can identify page loss
-             pageSequenceNr    += *(inbuf + 19) << 8;   // This sequence number is increasing on each logical bitstream
-             pageSequenceNr    += *(inbuf + 18); (void) pageSequenceNr;
-    uint32_t CRCchecksum        = *(inbuf + 25) << 24;
-             CRCchecksum       += *(inbuf + 24) << 16;
-             CRCchecksum       += *(inbuf + 23) << 8;
-             CRCchecksum       += *(inbuf + 22); (void) CRCchecksum;
+    uint8_t  version            = inbuf[4]; (void) version;
+    uint8_t  headerType         = inbuf[5]; (void) headerType;
+    uint64_t granulePosition    = (uint64_t)inbuf[13] << 56;
+             granulePosition   += (uint64_t)inbuf[12] << 48;
+             granulePosition   += (uint64_t)inbuf[11] << 40;
+             granulePosition   += (uint64_t)inbuf[10] << 32;
+             granulePosition   += inbuf[9] << 24;
+             granulePosition   += inbuf[8] << 16;
+             granulePosition   += inbuf[7] << 8;
+             granulePosition   += inbuf[6]; (void) granulePosition;
+    uint32_t bitstreamSerialNr  = inbuf[17] << 24;
+             bitstreamSerialNr += inbuf[16] << 16;
+             bitstreamSerialNr += inbuf[15] << 8;
+             bitstreamSerialNr += inbuf[14]; (void) bitstreamSerialNr;
+    uint32_t pageSequenceNr     = inbuf[21] << 24;
+             pageSequenceNr    += inbuf[20] << 16;
+             pageSequenceNr    += inbuf[19] << 8;
+             pageSequenceNr    += inbuf[18]; (void) pageSequenceNr;
+    uint32_t CRCchecksum        = inbuf[25] << 24;
+             CRCchecksum       += inbuf[24] << 16;
+             CRCchecksum       += inbuf[23] << 8;
+             CRCchecksum       += inbuf[22]; (void) CRCchecksum;
 
-    // read the segment table (contains pageSegments bytes),  1...251: Length of the frame in bytes,
-    // 255: A second byte is needed.  The total length is first_byte + second byte
+    // read the segment table - proper Ogg lacing with continued packets
     s_flacSegmTableVec.clear();
-    s_flacSegmTableVec.shrink_to_fit();
-    for(int32_t i = 0; i < pageSegments; i++){
-        int32_t n = *(inbuf + 27 + i);
-        while(*(inbuf + 27 + i) == 255){
-            i++;
-            if(i == pageSegments) break;
-            n+= *(inbuf + 27 + i);
-        }
-        s_flacSegmTableVec.insert(s_flacSegmTableVec.begin(), n);
-    }
-    // for(int32_t i = 0; i< s_flacSegmTableVec.size(); i++){FLAC_LOG_INFO("%i", s_flacSegmTableVec[i]);}
+    // DO NOT shrink here — causes realloc/free on every page and heap fragmentation
 
-    bool     continuedPage = headerType & 0x01; // set: page contains data of a packet continued from the previous page
-    bool     firstPage     = headerType & 0x02; // set: this is the first page of a logical bitstream (bos)
-    bool     lastPage      = headerType & 0x04; // set: this is the last page of a logical bitstream (eos)
-
+    bool     continuedPage = headerType & 0x01;
+    bool     firstPage     = headerType & 0x02;
+    bool     lastPage      = headerType & 0x04;
     (void)continuedPage; (void)lastPage;
 
-    // FLAC_LOG_INFO("firstPage %i, continuedPage %i, lastPage %i", firstPage, continuedPage, lastPage);
-
     if(firstPage) s_flacPageNr = 0;
+
+    uint32_t cur = continuedPage ? s_oggPendingPacketLen : 0;
+    s_oggPendingPacketLen = 0;
+    for(uint32_t i = 0; i < pageSegments; i++){
+        uint8_t l = inbuf[27 + i];
+        cur += l;
+        if(l < 255){
+            // packet ended on this segment
+            s_flacSegmTableVec.insert(s_flacSegmTableVec.begin(), cur);
+            cur = 0;
+        }
+    }
+    // if packet did not end (last lacing value 255), carry it to next page
+    if(cur > 0){
+        s_oggPendingPacketLen = cur;
+    }
 
     *bytesLeft -= headerSize;
     s_flacCurrentFilePos += headerSize;
@@ -320,7 +323,7 @@ vector<uint32_t> FLACgetMetadataBlockPicture(){
     }
     if(s_flacBlockPicItem.size() > 0){
         s_flacBlockPicItem.clear();
-        s_flacBlockPicItem.shrink_to_fit();
+        s_flacBlockPicItem;
     }
     return s_flacBlockPicItem;
 }
@@ -530,7 +533,7 @@ int32_t parseMetaDataBlockHeader(uint8_t *inbuf, int16_t nBytes){
                         if(s_flacRemainBlockPicLen <= 0) s_f_lastMetaDataBlock = true; // exeption:: goto audiopage after commemt if lastMetaDataFlag is not set
                         if(s_flacBlockPicLen){
                             s_flacBlockPicItem.clear();
-                            s_flacBlockPicItem.shrink_to_fit();
+                            s_flacBlockPicItem;
                             s_flacBlockPicItem.push_back(s_flacBlockPicPos);
                             s_flacBlockPicItem.push_back(s_flacBlockPicLenUntilFrameEnd);
                         }
@@ -606,6 +609,10 @@ int8_t FLACDecode(uint8_t *inbuf, int32_t *bytesLeft, int16_t *outbuf){ //  MAIN
         //-------------------------------------------------------
         if(!s_flacSegmTableVec.size()) FLAC_LOG_ERROR("size is 0");
         segmLen = s_flacSegmTableVec.back();
+        // If not enough payload bytes yet, wait. Do NOT pop and do NOT consume.
+        if(*bytesLeft < (int32_t)segmLen){
+            return FLAC_PARSE_OGG_DONE;
+        }
         s_flacSegmTableVec.pop_back();
         if(!s_flacSegmTableVec.size()) s_f_flacParseOgg = true;
         //-------------------------------------------------------
@@ -949,7 +956,7 @@ int8_t decodeFixedPredictionSubframe(uint8_t predOrder, uint8_t sampleDepth, uin
         s_samplesBuffer[ch][i] = readSignedInt(sampleDepth, bytesLeft); // Unencoded warm-up samples (n = frame's bits-per-sample * predictor order).
     ret = decodeResiduals(predOrder, ch, bytesLeft);
     if(ret) return ret;
-    coefs.clear(); coefs.shrink_to_fit();
+    coefs.clear(); coefs;
     if(predOrder == 0) coefs.resize(0);
     if(predOrder == 1) coefs.push_back(1);  // FIXED_PREDICTION_COEFFICIENTS
     if(predOrder == 2){coefs.push_back(2); coefs.push_back(-1);}
@@ -968,7 +975,7 @@ int8_t decodeLinearPredictiveCodingSubframe(int32_t lpcOrder, int32_t sampleDept
     }
     int32_t precision = readUint(4, bytesLeft) + 1;                         // (Quantized linear predictor coefficients' precision in bits)-1 (1111 = invalid).
     int32_t shift = readSignedInt(5, bytesLeft);                            // Quantized linear predictor coefficient shift needed in bits (NOTE: this number is signed two's-complement).
-    coefs.clear(); coefs.shrink_to_fit();
+    coefs.clear(); coefs;
     for (uint8_t i = 0; i < lpcOrder; i++){
         coefs.push_back(readSignedInt(precision, bytesLeft));           // Unencoded predictor coefficients (n = qlp coeff precision * lpc order) (NOTE: the coefficients are signed two's-complement).
     }
