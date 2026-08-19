@@ -5731,7 +5731,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     size_t needed = g_mf.get_output_buffer_size_samples(); // interleaved samples = max_block_size * channels
                     free(m_mf_out32);
                     m_mf_out32_cap = needed;
-                    m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap * sizeof(int32_t));
+                    m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap*sizeof(int32_t));
                     if(!m_mf_out32){
                         AUDIO_ERROR("microflac: out32 alloc failed (%u samples)", (unsigned)needed);
                         stopSong();
