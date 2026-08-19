@@ -854,8 +854,8 @@ int8_t flacDecodeFrame(uint8_t *inbuf, int32_t *bytesLeft){
         FLAC_LOG_ERROR("Flac, reserved blocksize unsupported, block size code: %i", FLACFrameHeader->blockSizeCode);
         return FLAC_ERR;
     }
-    if(s_numOfOutSamples > FLAC_MAX_OUTBUFFSIZE){
-        FLAC_LOG_ERROR("Flac, blockSizeOut too big ,%i bytes", s_numOfOutSamples);
+    if(s_numOfOutSamples > s_maxBlocksize){
+        FLAC_LOG_ERROR("Flac, blockSizeOut too big: %u samples (max %u)", (unsigned)s_numOfOutSamples, (unsigned)s_maxBlocksize);
         return FLAC_ERR;
     }
     if(FLACFrameHeader->sampleRateCode == 12)
