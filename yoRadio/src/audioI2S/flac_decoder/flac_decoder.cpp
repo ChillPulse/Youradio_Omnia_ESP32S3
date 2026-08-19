@@ -88,7 +88,7 @@ void FLACDecoder_ClearBuffer(){
         s_samplesBuffer[i].zero_mem();
     }
 
-    s_flacSegmTableVec.clear(); s_flacSegmTableVec;
+    s_flacSegmTableVec.clear();
     s_flacStatus = DECODE_FRAME;
     return;
 }
@@ -99,16 +99,16 @@ void FLACDecoder_FreeBuffers(){
     s_flacStreamTitle.reset();
     s_flacVendorString.reset();
 
-    s_samplesBuffer.clear(); s_samplesBuffer;
-    coefs.clear(); coefs;
-    s_flacSegmTableVec.clear(); s_flacSegmTableVec;
-    s_flacBlockPicItem.clear(); s_flacBlockPicItem;
+    s_samplesBuffer.clear();
+    coefs.clear();
+    s_flacSegmTableVec.clear();
+    s_flacBlockPicItem.clear();
 }
 //----------------------------------------------------------------------------------------------------------------------
 void FLACDecoder_setDefaults(){
-    coefs.clear(); coefs;
-    s_flacSegmTableVec.clear(); s_flacSegmTableVec;
-    s_flacBlockPicItem.clear(); s_flacBlockPicItem;
+    coefs.clear();
+    s_flacSegmTableVec.clear();
+    s_flacBlockPicItem.clear();
     s_flac_bitBuffer = 0;
     s_flacBitrate = 0;
     s_flacBlockPicLenUntilFrameEnd = 0;
@@ -359,7 +359,6 @@ vector<uint32_t> FLACgetMetadataBlockPicture(){
     }
     if(s_flacBlockPicItem.size() > 0){
         s_flacBlockPicItem.clear();
-        s_flacBlockPicItem;
     }
     return s_flacBlockPicItem;
 }
@@ -569,7 +568,6 @@ int32_t parseMetaDataBlockHeader(uint8_t *inbuf, int16_t nBytes){
                         if(s_flacRemainBlockPicLen <= 0) s_f_lastMetaDataBlock = true; // exeption:: goto audiopage after commemt if lastMetaDataFlag is not set
                         if(s_flacBlockPicLen){
                             s_flacBlockPicItem.clear();
-                            s_flacBlockPicItem;
                             s_flacBlockPicItem.push_back(s_flacBlockPicPos);
                             s_flacBlockPicItem.push_back(s_flacBlockPicLenUntilFrameEnd);
                         }
@@ -1004,7 +1002,7 @@ int8_t decodeFixedPredictionSubframe(uint8_t predOrder, uint8_t sampleDepth, uin
         s_samplesBuffer[ch][i] = readSignedInt(sampleDepth, bytesLeft); // Unencoded warm-up samples (n = frame's bits-per-sample * predictor order).
     ret = decodeResiduals(predOrder, ch, bytesLeft);
     if(ret) return ret;
-    coefs.clear(); coefs;
+    coefs.clear();
     if(predOrder == 0) coefs.resize(0);
     if(predOrder == 1) coefs.push_back(1);  // FIXED_PREDICTION_COEFFICIENTS
     if(predOrder == 2){coefs.push_back(2); coefs.push_back(-1);}
@@ -1023,7 +1021,7 @@ int8_t decodeLinearPredictiveCodingSubframe(int32_t lpcOrder, int32_t sampleDept
     }
     int32_t precision = readUint(4, bytesLeft) + 1;                         // (Quantized linear predictor coefficients' precision in bits)-1 (1111 = invalid).
     int32_t shift = readSignedInt(5, bytesLeft);                            // Quantized linear predictor coefficient shift needed in bits (NOTE: this number is signed two's-complement).
-    coefs.clear(); coefs;
+    coefs.clear();
     for (uint8_t i = 0; i < lpcOrder; i++){
         coefs.push_back(readSignedInt(precision, bytesLeft));           // Unencoded predictor coefficients (n = qlp coeff precision * lpc order) (NOTE: the coefficients are signed two's-complement).
     }

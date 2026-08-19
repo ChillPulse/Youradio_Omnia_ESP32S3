@@ -7,8 +7,9 @@
  *      Author: wolle
  *
  *  Restrictions:
- *  blocksize must not exceed 32768 samples
- *  bits per sample must be 8, 16, 24 or 32 (24/32 downconverted to 16 output)
+ *  blocksize must not exceed 65535 samples (FLAC_MAX_BLOCKSIZE)
+ *  Ogg page/segment up to ~65025/65535 bytes (FLAC_MAX_OGG_SEGMENT)
+ *  bits per sample 8, 16, 24 or 32 (24/32 downconverted to 16 output)
  *  num Channels must be 1 or 2
  *
  *
