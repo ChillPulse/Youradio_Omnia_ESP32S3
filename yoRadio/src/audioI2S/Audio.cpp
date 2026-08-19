@@ -4069,7 +4069,13 @@ void Audio::microflac_reset_(){
         m_mf_out32 = nullptr;
     }
     m_mf_out32_cap = 0;
+    m_mf_pending_total = 0;
+    m_mf_pending_off = 0;
     g_mf.reset();
+    // Radio: don't waste time/memory on CRC and metadata blobs
+    g_mf.set_crc_check_enabled(false);
+    g_mf.set_max_metadata_size(micro_flac::FLAC_METADATA_TYPE_PICTURE, 0);
+    g_mf.set_max_metadata_size(micro_flac::FLAC_METADATA_TYPE_VORBIS_COMMENT, 0);
 }
 //****************************************************************************************
 void Audio::processWebStream() {
@@ -4590,6 +4596,33 @@ void Audio::playAudioData() {
 
     if(!m_f_stream || m_f_eof || m_f_lockInBuffer || !m_f_running){m_validSamples = 0; return;} // guard, stream not ready or eof reached or InBuff is locked or not running
     if(m_validSamples) {playChunk();                                                   return;} // guard, play samples first
+
+    // micro-flac: if we have pending decoded PCM, output next chunk without consuming new input bytes
+    if(m_codec == CODEC_FLAC && m_mf_active && m_mf_pending_off < m_mf_pending_total){
+        const size_t remain = m_mf_pending_total - m_mf_pending_off;
+        const size_t chunk = (remain > m_outbuffSize) ? m_outbuffSize : remain;
+        int bps = m_mf_bits ? (int)m_mf_bits : 16;
+        for(size_t i = 0; i < chunk; i++){
+            int32_t v = m_mf_out32[m_mf_pending_off + i];
+            // micro-flac int32 output is left-justified; normalize to bps
+            if(bps < 32) v >>= (32 - bps);
+            // scale to 16-bit output
+            if(bps > 16) v >>= (bps - 16);
+            else if(bps < 16) v <<= (16 - bps);
+            if(v > 32767) v = 32767;
+            if(v < -32768) v = -32768;
+            m_outBuff[i] = (int16_t)v;
+        }
+        m_mf_pending_off += chunk;
+        // validSamples is "samples per channel" in your pipeline: chunk is interleaved
+        m_validSamples = chunk / (m_channels ? m_channels : 2);
+        playChunk();
+        // keep watchdog happy
+        m_lastGoodDecodeMs = millis();
+        m_resyncSkipCnt = 0;
+        m_stallReconnectTries = 0;
+        return;
+    }
     //--------------------------------------------------------------------------------
     // IMPORTANT: do not reset count here; it must accumulate to reach the EOF fallback
     // m_pad.count = 0;
@@ -5708,50 +5741,19 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     res = 0;
                     break;
                 } else if(mf_res == micro_flac::FLAC_DECODER_SUCCESS){
-                    size_t total = samples_decoded;
-                    int bps = m_mf_bits ? m_mf_bits : 16;
-                    size_t maxOut = m_outbuffSize;
-                    if(total > maxOut) total = maxOut;
-                    for(size_t i=0;i<total;i++){
-                        int32_t v = m_mf_out32[i];
-                        if(bps < 32) v >>= (32 - bps);
-                        if(bps > 16) v >>= (bps - 16);
-                        else if(bps < 16) v <<= (16 - bps);
-                        if(v > 32767) v = 32767;
-                        if(v < -32768) v = -32768;
-                        m_outBuff[i] = (int16_t)v;
-                    }
-                    m_validSamples = samples_decoded / (m_mf_channels ? m_mf_channels : 2);
-                    if(total < samples_decoded){
-                        m_validSamples = total / (m_mf_channels ? m_mf_channels : 2);
-                    }
+                    // store pending decoded PCM (interleaved samples) in m_mf_out32
+                    m_mf_pending_total = samples_decoded;
+                    m_mf_pending_off = 0;
+                    // consume input bytes and let playAudioData() output chunks (it will immediately output first chunk)
                     m_sbyt.bytesLeft = len - bytes_consumed;
                     bytesDecoded = bytes_consumed;
                     res = 0;
-                    // handle validSamples path similar to original
-                    if(m_sbyt.f_setDecodeParamsOnce && m_validSamples){
-                        m_sbyt.f_setDecodeParamsOnce = false;
-                        setDecoderItems();
-                        m_PlayingStartTime = millis();
-                    }
-                    if(!m_validSamples){
-                        break;
-                    }
-                    uint16_t bytesDecoderOut = m_validSamples;
-                    if(m_channels == 2) bytesDecoderOut /= 2;
-                    if(m_bitsPerSample == 16) bytesDecoderOut *= 2;
-                    calculateAudioTime(bytesDecoded, bytesDecoderOut);
-                    if(m_validSamples){
-                        playChunk();
-                        m_lastGoodDecodeMs = millis();
-                        m_resyncSkipCnt = 0;
-                        m_stallReconnectTries = 0;
-                    }
-                    return bytesDecoded;
+                    break;
                 } else if(mf_res == micro_flac::FLAC_DECODER_NEED_MORE_DATA){
                     m_sbyt.bytesLeft = len - bytes_consumed;
                     bytesDecoded = bytes_consumed;
-                    res = 100;
+                    // Tell core loop "need more data" using existing FLAC continue codepath
+                    res = FLAC_DECODE_FRAMES_LOOP;
                     break;
                 } else if(mf_res == micro_flac::FLAC_DECODER_END_OF_STREAM){
                     m_f_eof = true;
