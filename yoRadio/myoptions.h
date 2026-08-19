@@ -7,6 +7,8 @@
 /* !!! Do not be alarmed by some #defines missing. Default values are not included in this file. !!! */
 /* !!! Values of 255 must be edited before using (except I2S_DOUT 255 which is used to disable I2S Sound). !!! */
 
+#define OMNIA_SMALL_OGG_OPUS_VORBIS 1
+#define OMNIA_OGG_PREBUFFER 60000
 #define ARDUINO_ESP32S3_DEV
 
 #define L10N_LANGUAGE			RU
