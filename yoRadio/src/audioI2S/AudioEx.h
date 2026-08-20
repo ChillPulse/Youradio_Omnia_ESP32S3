@@ -754,6 +754,7 @@ private:
     // micro-flac pending decoded PCM (interleaved samples in m_mf_out32)
     size_t          m_mf_pending_total = 0; // total interleaved samples available
     size_t          m_mf_pending_off = 0; // current offset in samples
+    size_t          m_mf_prevMaxBlockSize = 0;
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;

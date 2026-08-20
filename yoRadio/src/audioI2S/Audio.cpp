@@ -3987,6 +3987,8 @@ void Audio::processLocalFile() {
         if(m_f_stream && m_codec == CODEC_FLAC && (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE) && !m_mf_active){
             microflac_reset_();
             m_mf_active = true;
+                    m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
+                    InBuff.changeMaxBlockSize(8192);
             AUDIO_INFO("format is flac (micro-flac WEB) - late activation webfile");
         }
     }
@@ -4076,6 +4078,10 @@ void Audio::microflac_reset_(){
     m_mf_out32_cap = 0;
     m_mf_pending_total = 0;
     m_mf_pending_off = 0;
+    if(m_mf_prevMaxBlockSize){
+        InBuff.changeMaxBlockSize(m_mf_prevMaxBlockSize);
+        m_mf_prevMaxBlockSize = 0;
+    }
     g_mf.reset();
     // Radio: don't waste time/memory on CRC and metadata blobs
     g_mf.set_crc_check_enabled(false);
@@ -4183,6 +4189,8 @@ void Audio::processWebStream() {
                 if(m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE){
                     microflac_reset_();
                     m_mf_active = true;
+                    m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
+                    InBuff.changeMaxBlockSize(8192);
                     m_codec = CODEC_FLAC;
                     AUDIO_INFO("format is flac (micro-flac WEB)");
                 } else {
@@ -4210,6 +4218,8 @@ void Audio::processWebStream() {
     if(m_f_stream && m_codec == CODEC_FLAC && (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE) && !m_mf_active){
         microflac_reset_();
         m_mf_active = true;
+                    m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
+                    InBuff.changeMaxBlockSize(8192);
         AUDIO_INFO("format is flac (micro-flac WEB) - late activation");
     }
 
@@ -4284,6 +4294,8 @@ void Audio::processWebFile() {
                 if(m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE){
                     microflac_reset_();
                     m_mf_active = true;
+                    m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
+                    InBuff.changeMaxBlockSize(8192);
                     m_codec = CODEC_FLAC;
                     AUDIO_INFO("format is flac (micro-flac WEB)");
                     return;
@@ -4325,6 +4337,8 @@ void Audio::processWebFile() {
         if(m_f_stream && m_codec == CODEC_FLAC && (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE) && !m_mf_active){
             microflac_reset_();
             m_mf_active = true;
+                    m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
+                    InBuff.changeMaxBlockSize(8192);
             AUDIO_INFO("format is flac (micro-flac WEB) - late activation webfile");
         }
     }
@@ -5710,6 +5724,8 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                 if(!m_mf_active){
                     microflac_reset_();
                     m_mf_active = true;
+                    m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
+                    InBuff.changeMaxBlockSize(8192);
                 }
                 size_t bytes_consumed = 0;
                 size_t samples_decoded = 0;

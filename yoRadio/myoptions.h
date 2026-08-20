@@ -18,6 +18,6 @@
 #define SDC_CS			39
 #define MUTE_PIN			2
 
-#define MICRO_FLAC_MEMORY_PREFER_PSRAM 1
+#define MICRO_FLAC_MEMORY_PREFER_INTERNAL 1
 
 #endif

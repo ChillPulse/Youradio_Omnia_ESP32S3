@@ -27,7 +27,10 @@
 #endif
 
 #include <new> // std::nothrow
-#include <micro_ogg/ogg_demuxer.h>
+#ifdef ESP_PLATFORM
+#include <esp_timer.h>
+#endif
+
 #ifdef ARDUINO_ARCH_ESP32
 #include <esp_heap_caps.h>
 #endif
@@ -43,6 +46,14 @@ static void ogg_psram_free(void* p) {
     heap_caps_free(p);
 }
 #endif
+
+static inline uint32_t mf_millis() {
+#ifdef ESP_PLATFORM
+    return (uint32_t)(esp_timer_get_time() / 1000ULL);
+#else
+    return 0;
+#endif
+}
 
 #include <algorithm>
 #include <cassert>
@@ -485,9 +496,9 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
     // (via demuxer consumption) or returns NEED_MORE_DATA when bytes_consumed >= input_len.
     // Malformed files with many tiny Ogg pages may cause many iterations per call, but
     // the count is proportional to input size.
-    const uint32_t t0 = millis();
+    const uint32_t t0 = mf_millis();
     while (true) {
-        if((millis() - t0) > 12){
+        if((mf_millis() - t0) > 12){
             // Budget exceeded: return and continue next call (prevents hangs on embedded)
             return FLAC_DECODER_NEED_MORE_DATA;
         }
