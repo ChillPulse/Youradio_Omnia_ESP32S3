@@ -485,9 +485,18 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
     // (via demuxer consumption) or returns NEED_MORE_DATA when bytes_consumed >= input_len.
     // Malformed files with many tiny Ogg pages may cause many iterations per call, but
     // the count is proportional to input size.
+    const uint32_t t0 = millis();
     while (true) {
+        if((millis() - t0) > 12){
+            // Budget exceeded: return and continue next call (prevents hangs on embedded)
+            return FLAC_DECODER_NEED_MORE_DATA;
+        }
         size_t remaining = input_len - bytes_consumed;
         auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
+        if(state.bytes_consumed == 0 && state.result != micro_ogg::OGG_NEED_MORE_DATA){
+            // No forward progress -> yield to next call
+            return FLAC_DECODER_NEED_MORE_DATA;
+        }
         bytes_consumed += state.bytes_consumed;
 
         if (state.result == micro_ogg::OGG_NEED_MORE_DATA) {

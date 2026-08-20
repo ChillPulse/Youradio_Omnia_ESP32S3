@@ -5703,6 +5703,9 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
         case CODEC_FLAC: {
             bool isWeb = (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE);
             if(isWeb){
+                // Feed micro-flac in small chunks to avoid long decode loops / CPU stalls
+                const size_t FEED_MAX = 8192;
+                if(len > FEED_MAX) len = FEED_MAX;
                 // WEB FLAC -> micro-flac backend (radio only)
                 if(!m_mf_active){
                     microflac_reset_();
@@ -5741,6 +5744,8 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     m_sbyt.bytesLeft = len - bytes_consumed;
                     bytesDecoded = bytes_consumed;
                     res = 0;
+                    // micro-flac already set params from stream info, do not use legacy setDecoderItems()
+                    m_sbyt.f_setDecodeParamsOnce = false;
                     break;
                 } else if(mf_res == micro_flac::FLAC_DECODER_SUCCESS){
                     // store pending decoded PCM (interleaved samples) in m_mf_out32
@@ -5769,6 +5774,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     bytesDecoded = bytes_consumed ? bytes_consumed : 1;
                     // If header not ready -> fatal for this stream state. Reset and stop cleanly.
                     if(!m_mf_header_ready){
+                        AUDIO_ERROR("microflac fatal before header ready -> stop");
                         microflac_reset_();
                         m_mf_active = true; // keep micro-flac mode for next connect
                         res = -100; // serious error -> decodeError() will stopSong()
