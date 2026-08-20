@@ -504,8 +504,16 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         }
         size_t remaining = input_len - bytes_consumed;
         auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
-        if(state.bytes_consumed == 0 && state.result != micro_ogg::OGG_NEED_MORE_DATA){
-            // No forward progress -> yield to next call
+        // "No progress" is only a problem if we also have no packet to process.
+        // micro_ogg may legally return OGG_OK with packet ready and bytes_consumed==0 (from internal buffer).
+        if(state.bytes_consumed == 0 &&
+           state.result == micro_ogg::OGG_OK &&
+           state.packet.length == 0) {
+            return FLAC_DECODER_NEED_MORE_DATA;
+        }
+
+        // If packet was skipped but no bytes were consumed, don't spin.
+        if(state.bytes_consumed == 0 && state.result == micro_ogg::OGG_PACKET_SKIPPED){
             return FLAC_DECODER_NEED_MORE_DATA;
         }
         bytes_consumed += state.bytes_consumed;

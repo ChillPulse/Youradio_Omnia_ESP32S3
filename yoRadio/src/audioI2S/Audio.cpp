@@ -4078,6 +4078,7 @@ void Audio::microflac_reset_(){
     m_mf_out32_cap = 0;
     m_mf_pending_total = 0;
     m_mf_pending_off = 0;
+    m_mf_waitHeaderSinceMs = 0;
     if(m_mf_prevMaxBlockSize){
         InBuff.changeMaxBlockSize(m_mf_prevMaxBlockSize);
         m_mf_prevMaxBlockSize = 0;
@@ -5727,6 +5728,9 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
                     InBuff.changeMaxBlockSize(8192);
                 }
+                if(!m_mf_header_ready && m_mf_waitHeaderSinceMs == 0){
+                    m_mf_waitHeaderSinceMs = millis();
+                }
                 size_t bytes_consumed = 0;
                 size_t samples_decoded = 0;
                 int32_t* out = nullptr;
@@ -5775,6 +5779,13 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                 } else if(mf_res == micro_flac::FLAC_DECODER_NEED_MORE_DATA){
                     m_sbyt.bytesLeft = len - bytes_consumed;
                     bytesDecoded = bytes_consumed;
+                    // If we can't reach HEADER_READY for too long -> reconnect (avoid infinite silence)
+                    if(!m_mf_header_ready && m_mf_waitHeaderSinceMs &&
+                       (millis() - m_mf_waitHeaderSinceMs) > 6000 &&
+                       InBuff.bufferFilled() > 60000) {
+                        AUDIO_ERROR("microflac: HEADER_READY timeout -> reconnect");
+                        stallReconnect("mf_header_timeout");
+                    }
                     // Tell core loop "need more data" using existing FLAC continue codepath
                     res = FLAC_DECODE_FRAMES_LOOP;
                     break;
@@ -5859,7 +5870,13 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                             break;
         case CODEC_M4A:     m_validSamples = AACGetOutputSamps() / getChannels();
                             break;
-        case CODEC_FLAC:    m_validSamples = FLACGetOutputSamps() / getChannels();
+        case CODEC_FLAC:
+            if(m_mf_active){
+                // micro-flac: PCM is output via pending chunks in playAudioData()
+                m_validSamples = 0;
+            } else {
+                m_validSamples = FLACGetOutputSamps() / getChannels();
+            }
                             st = FLACgetStreamTitle();
                             if(st) {
                                 /*info(evt_streamtitle,*/ audio_showstreamtitle(st);
