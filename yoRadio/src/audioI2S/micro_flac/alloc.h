@@ -20,8 +20,13 @@
 
 #pragma once
 
+// Pull user build options (Arduino include path contains yoRadio/)
+#if __has_include("myoptions.h")
+#include "myoptions.h"
+#endif
+
 // Include necessary headers based on platform
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
 #include <esp_heap_caps.h>
 #else
 #include <cstdlib>
@@ -40,7 +45,7 @@
 #endif
 
 #ifndef FLAC_MALLOC
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
 #if defined(MICRO_FLAC_MEMORY_PREFER_PSRAM)
 #define FLAC_MALLOC(sz)                                                  \
     heap_caps_malloc_prefer(sz, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT, \
@@ -65,7 +70,7 @@
 #endif
 
 #ifndef FLAC_FREE
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
 #define FLAC_FREE(p) heap_caps_free(p)
 #else
 #define FLAC_FREE(p) free(p)

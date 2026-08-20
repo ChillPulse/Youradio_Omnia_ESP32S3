@@ -27,7 +27,7 @@
 #endif
 
 #include <new> // std::nothrow
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
 #include <esp_timer.h>
 #endif
 
@@ -48,7 +48,7 @@ static void ogg_psram_free(void* p) {
 #endif
 
 static inline uint32_t mf_millis() {
-#ifdef ESP_PLATFORM
+#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
     return (uint32_t)(esp_timer_get_time() / 1000ULL);
 #else
     return 0;
