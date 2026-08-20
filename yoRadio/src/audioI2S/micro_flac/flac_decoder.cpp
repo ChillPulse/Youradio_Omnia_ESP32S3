@@ -466,7 +466,13 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         this->detect_buffer_len_ = 0;
         // detect_buffer_fed_ stays false for decode_native reuse
 
-        if (state.result != micro_ogg::OGG_NEED_MORE_DATA && state.result != micro_ogg::OGG_OK) {
+        if (state.result == micro_ogg::OGG_PACKET_SKIPPED) {
+            // ok, skip and continue
+        } else if (state.result < 0) {
+            // reset demuxer and wait for more data
+            this->ogg_demuxer_->reset();
+            return FLAC_DECODER_NEED_MORE_DATA;
+        } else if (state.result != micro_ogg::OGG_NEED_MORE_DATA && state.result != micro_ogg::OGG_OK) {
             return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
         }
     }
@@ -490,6 +496,31 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             }
             if (bytes_consumed < input_len) {
                 continue;  // More input available; e.g., next page header after page finalization
+            }
+            return FLAC_DECODER_NEED_MORE_DATA;
+        }
+
+        if (state.result == micro_ogg::OGG_PACKET_SKIPPED) {
+            // packet too large / skipped -> just continue scanning
+            continue;
+        }
+
+        if (state.result < 0) {
+            // Radio streams may chain/restart; try to resync
+            this->ogg_demuxer_->reset();
+            // Try to find next "OggS" inside remaining input to resync quickly
+            if (bytes_consumed < input_len) {
+                const uint8_t* p = input + bytes_consumed;
+                size_t r = input_len - bytes_consumed;
+                // naive search for 'O''g''g''S'
+                size_t k = 0;
+                for (; k + 3 < r; k++) {
+                    if (p[k] == 'O' && p[k+1] == 'g' && p[k+2] == 'g' && p[k+3] == 'S') break;
+                }
+                if (k + 3 < r) {
+                    bytes_consumed += k; // jump to next page
+                    continue;
+                }
             }
             return FLAC_DECODER_NEED_MORE_DATA;
         }
