@@ -5767,7 +5767,15 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     AUDIO_ERROR("microflac decode error %d", (int)mf_res);
                     m_sbyt.bytesLeft = len - bytes_consumed;
                     bytesDecoded = bytes_consumed ? bytes_consumed : 1;
-                    res = -1;
+                    // If header not ready -> fatal for this stream state. Reset and stop cleanly.
+                    if(!m_mf_header_ready){
+                        microflac_reset_();
+                        m_mf_active = true; // keep micro-flac mode for next connect
+                        res = -100; // serious error -> decodeError() will stopSong()
+                    } else {
+                        // after HEADER_READY micro-flac can often recover if we advance input
+                        res = -1;
+                    }
                     break;
                 }
             } else {

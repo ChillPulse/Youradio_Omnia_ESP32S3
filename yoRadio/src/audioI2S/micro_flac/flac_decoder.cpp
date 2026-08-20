@@ -26,6 +26,24 @@
 #include "micro_ogg/ogg_demuxer.h"
 #endif
 
+#include <new> // std::nothrow
+#include <micro_ogg/ogg_demuxer.h>
+#ifdef ARDUINO_ARCH_ESP32
+#include <esp_heap_caps.h>
+#endif
+
+#ifdef ARDUINO_ARCH_ESP32
+static void* ogg_psram_alloc(size_t s) {
+    return heap_caps_malloc(s, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+static void* ogg_psram_realloc(void* p, size_t s) {
+    return heap_caps_realloc(p, s, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+static void ogg_psram_free(void* p) {
+    heap_caps_free(p);
+}
+#endif
+
 #include <algorithm>
 #include <cassert>
 #include <cstring>
@@ -245,8 +263,20 @@ FLACDecoderResult FLACDecoder::decode_impl(const uint8_t* input, size_t input_le
             this->detect_buffer_[2] == 'g' && this->detect_buffer_[3] == 'S') {
 #ifndef MICRO_FLAC_DISABLE_OGG
             this->container_type_ = ContainerType::OGG_FLAC;
-            // Streaming mode: only a 282-byte header staging buffer is needed
-            this->ogg_demuxer_ = std::make_unique<micro_ogg::OggDemuxer>();
+            // Streaming mode: configure Ogg demuxer with large buffer for FLAC radio (default 8KB too small)
+            micro_ogg::OggDemuxerConfig cfg;
+            cfg.min_buffer_size = 16384;
+            cfg.max_buffer_size = 1024 * 1024; // 1MB max packet assembly buffer for Ogg-FLAC
+            cfg.enable_crc = false;
+#ifdef ARDUINO_ARCH_ESP32
+            cfg.alloc = ogg_psram_alloc;
+            cfg.realloc = ogg_psram_realloc;
+            cfg.free = ogg_psram_free;
+#endif
+            this->ogg_demuxer_.reset(new (std::nothrow) micro_ogg::OggDemuxer(cfg));
+            if (!this->ogg_demuxer_) {
+                return this->set_fatal_error(FLAC_DECODER_ERROR_MEMORY_ALLOCATION);
+            }
 #else
             return this->set_fatal_error(FLAC_DECODER_ERROR_INPUT_INVALID);
 #endif
