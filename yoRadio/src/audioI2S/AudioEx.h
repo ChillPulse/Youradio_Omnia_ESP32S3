@@ -99,6 +99,7 @@ public:
     bool     setBufsize(size_t mbs);            // default is m_buffSizePSRAM for psram, and m_buffSizeRAM without psram
     void     changeMaxBlockSize(uint16_t mbs);  // is default 1600 for mp3 and aac, set 16384 for FLAC
     uint16_t getMaxBlockSize();                 // returns maxBlockSize
+    size_t   getResBuffSize() { return m_resBuffSize; } // OMNIA Log59 (R5): residual reserve size (>= maxBlockSize)
     size_t   freeSpace();                       // number of free bytes to overwrite
     size_t   writeSpace();                      // space fom writepointer to bufferend
     size_t   bufferFilled();                    // returns the number of filled bytes
@@ -118,6 +119,7 @@ protected:
     size_t            m_dataLength       = 0;
     size_t            m_resBuffSize      = UINT16_MAX; // reserve must be >= maxBlockSize (OGG pages may be up to 64KB)
     size_t            m_maxBlockSize     = 1600;
+    bool              m_f_blockClampLogged = false; // OMNIA Log59 (R5): one-shot log for maxBlockSize clamp
     ps_ptr<uint8_t>   m_buffer;
     uint8_t*          m_writePtr         = NULL;
     uint8_t*          m_readPtr          = NULL;
@@ -762,6 +764,10 @@ private:
     uint32_t        m_mf_headerReadyAtMs = 0; // millis() when HEADER_READY was reached (grace window)
     uint32_t        m_mf_lastProgressMs = 0; // last time bytes_consumed>0 or SUCCESS
     int8_t          m_mf_lastRes = 0; // diag: last micro-flac decode result
+    int8_t          m_mf_prevErr = 0; // last error code seen (latched-error detection)
+    uint16_t        m_mf_errSoftCnt = 0; // soft errors after header within current 10s window
+    uint32_t        m_mf_errWindowMs = 0; // start of the soft-error counting window
+    bool            m_mf_streamLogged = false; // one-shot "microflac stream:" log after header
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;

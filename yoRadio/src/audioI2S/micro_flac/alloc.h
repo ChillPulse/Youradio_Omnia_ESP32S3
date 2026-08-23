@@ -20,12 +20,13 @@
 
 #pragma once
 
-// Pull user build options (Arduino include path contains yoRadio/)
+// OMNIA-PATCH Log59: pull user build options (Arduino include path contains yoRadio/)
 #if __has_include("myoptions.h")
 #include "myoptions.h"
 #endif
 
 // Include necessary headers based on platform
+// OMNIA-PATCH Log59: Arduino ESP32 builds define ARDUINO_ARCH_ESP32 (ESP_PLATFORM may be absent)
 #if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
 #include <esp_heap_caps.h>
 #else
@@ -45,7 +46,7 @@
 #endif
 
 #ifndef FLAC_MALLOC
-#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
+#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32) // OMNIA-PATCH Log59
 #if defined(MICRO_FLAC_MEMORY_PREFER_PSRAM)
 #define FLAC_MALLOC(sz)                                                  \
     heap_caps_malloc_prefer(sz, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_32BIT, \
@@ -70,7 +71,7 @@
 #endif
 
 #ifndef FLAC_FREE
-#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
+#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32) // OMNIA-PATCH Log59
 #define FLAC_FREE(p) heap_caps_free(p)
 #else
 #define FLAC_FREE(p) free(p)

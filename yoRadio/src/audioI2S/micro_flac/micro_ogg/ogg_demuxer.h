@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// @file ogg_demuxer.h
-/// @brief Lightweight, platform-agnostic Ogg container demuxer implementing RFC 3533 page demuxing
+/* microOggDemuxer - Lightweight Ogg Container Demuxer
+ * Implements RFC 3533 Ogg page demuxing
+ *
+ * Platform-agnostic, zero dependencies
+ */
 
 #ifndef MICRO_OGG_DEMUXER_H
 #define MICRO_OGG_DEMUXER_H
@@ -21,22 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 
-// Marks functions whose return value must not be ignored (the demuxer reports
-// errors only through the returned state). [[nodiscard]] needs C++17; the
-// library builds at C++11, so fall back to the GNU attribute there.
-#if defined(__cplusplus) && __cplusplus >= 201703L
-#define MICRO_OGG_NODISCARD [[nodiscard]]
-#elif defined(__GNUC__)
-#define MICRO_OGG_NODISCARD __attribute__((warn_unused_result))
-#else
-#define MICRO_OGG_NODISCARD
-#endif
-
 namespace micro_ogg {
-
-// Ogg page geometry (RFC 3533)
-constexpr size_t OGG_PAGE_HEADER_SIZE = 27;  // Fixed header before segment table
-constexpr size_t OGG_MAX_HEADER_SIZE = 282;  // 27 + 255 segment table entries
 
 /**
  * @brief Ogg page header structure (per RFC 3533)
@@ -63,21 +51,28 @@ enum OggHeaderType : uint8_t {
  * @brief Result codes for Ogg demuxing
  */
 enum OggDemuxResult : int8_t {
-    // Success / informational (>= 0)
+    // Success codes
     OGG_OK = 0,              // Success
     OGG_NEED_MORE_DATA = 1,  // Need more data to complete page
     OGG_PACKET_SKIPPED = 2,  // Packet was skipped (too large to buffer)
 
-    // Errors (< 0)
-    OGG_INVALID_CAPTURE = -1,            // Invalid "OggS" capture pattern
-    OGG_INVALID_VERSION = -2,            // Unsupported version
-    OGG_CRC_FAILED = -3,                 // CRC checksum validation failed
-    OGG_STREAM_SEQUENCE_ERROR = -4,      // Page sequence number mismatch
-    OGG_STREAM_BOS_ERROR = -5,           // BOS flag violation (invalid placement)
-    OGG_STREAM_EOS_ERROR = -6,           // EOS flag violation (EOS with continued packet)
-    OGG_STREAM_SERIAL_MISMATCH = -7,     // New stream serial (concatenated stream)
+    // Format errors (potentially recoverable)
+    OGG_INVALID_CAPTURE = -1,  // Invalid "OggS" capture pattern
+    OGG_INVALID_VERSION = -2,  // Unsupported version
+    OGG_CRC_FAILED = -3,       // CRC checksum validation failed
+
+    // Stream structure errors
+    OGG_STREAM_SEQUENCE_ERROR = -4,   // Page sequence number mismatch
+    OGG_STREAM_BOS_ERROR = -5,        // BOS flag violation (invalid placement)
+    OGG_STREAM_EOS_ERROR = -6,        // EOS flag violation (EOS with continued packet)
+    OGG_STREAM_SERIAL_MISMATCH = -7,  // New stream serial (concatenated stream)
+
     OGG_STREAM_CONTINUATION_ERROR = -8,  // Continued flag inconsistent with previous page
-    OGG_ALLOCATION_FAILED = -9,          // Memory allocation failed
+
+    // Resource errors
+    OGG_ALLOCATION_FAILED = -9,  // Memory allocation failed
+
+    // API usage errors
     OGG_INVALID_MODE_SWITCH = -10,  // Switched between get_next_packet()/get_next_data() mid-packet
     OGG_INVALID_INPUT = -11         // Null input pointer with a non-zero input_len
 };
@@ -119,9 +114,8 @@ struct OggDemuxState {
  * - alloc: Must return nullptr on failure (like malloc)
  * - realloc: Must return nullptr on failure without freeing original ptr (like realloc)
  * - free: Must handle nullptr gracefully (like free)
- * - The callbacks are used as a full set: provide all of alloc/realloc/free or none
- * - If only some callbacks are set, they are all ignored and standard
- *   malloc/realloc/free used
+ * - If alloc is provided, free must also be provided (and vice versa)
+ * - If only some callbacks are set, they will be ignored and standard malloc/free used
  */
 struct OggDemuxerConfig {
     size_t min_buffer_size = 1024;
@@ -158,39 +152,14 @@ struct OggDemuxerConfig {
  * - internal_buffer_ uses configurable allocator (malloc/free by default)
  * - Once allocated, internal_buffer_ persists for the lifetime of the object
  * - reset() does not deallocate buffers, only resets demuxer state
- *
- * Usage:
- * 1. Create an OggDemuxer instance (optionally with a custom OggDemuxerConfig)
- * 2. Call get_next_packet() with chunks of Ogg data
- * 3. Check state.result: values < 0 are errors; values >= 0 are success/informational
- * 4. On OGG_OK, use state.packet (data, length, granule_position, flags)
- * 5. Advance the input pointer by state.bytes_consumed
- * 6. Repeat, feeding more data when OGG_NEED_MORE_DATA is returned
- *
- * Example:
- * @code
- * OggDemuxer demuxer;  // Constructor always succeeds; buffers allocate lazily
- *
- * while (input_len > 0) {
- *     OggDemuxState state = demuxer.get_next_packet(input, input_len);
- *     if (state.result == OGG_OK) {
- *         // Use state.packet.data / state.packet.length before the next call
- *         process_packet(state.packet.data, state.packet.length);
- *     } else if (state.result < 0) {
- *         break;  // Unrecoverable error
- *     }
- *     input += state.bytes_consumed;
- *     input_len -= state.bytes_consumed;
- * }
- * @endcode
  */
 class OggDemuxer {
 public:
     /**
      * @brief Construct OggDemuxer with configurable settings
      *
-     * @note The internal packet assembly buffer is NOT allocated in the constructor.
-     *       It is allocated lazily on the first call to get_next_packet().
+     * Note: The internal packet assembly buffer is NOT allocated in constructor.
+     * It will be allocated lazily on first call to get_next_packet().
      *
      * The buffer starts at config.min_buffer_size and grows dynamically up to
      * config.max_buffer_size as needed. Typical audio packets fit within the
@@ -207,12 +176,35 @@ public:
      *       and defer processing until is_last_on_page is true, then discard all buffered
      *       packets if OGG_CRC_FAILED is returned.
      */
-    explicit OggDemuxer(const OggDemuxerConfig& config = OggDemuxerConfig{});
+    OggDemuxer(const OggDemuxerConfig& config = OggDemuxerConfig{});
     ~OggDemuxer();
 
     // Prevent copying (would cause double-free of owned pointers)
     OggDemuxer(const OggDemuxer&) = delete;
     OggDemuxer& operator=(const OggDemuxer&) = delete;
+
+    /**
+     * @brief Demux data and extract the next complete packet
+     *
+     * Zero-copy design: packet.data may point directly to user's input buffer
+     * when the packet is complete and doesn't require reassembly. Otherwise, it
+     * points to an internal buffer. The pointer is only valid until the next call.
+     *
+     * @param input Input data pointer
+     * @param input_len Available input data length
+     * @return OggDemuxState containing result, bytes consumed, and packet data
+     *
+     * Usage:
+     * @code
+     * OggDemuxState state = demuxer.get_next_packet(input, input_len);
+     * if (state.result == OGG_OK) {
+     *     // Use state.packet.data, state.packet.length, etc.
+     * }
+     * input += state.bytes_consumed;
+     * input_len -= state.bytes_consumed;
+     * @endcode
+     */
+    OggDemuxState get_next_packet(const uint8_t* input, size_t input_len);
 
     /**
      * @brief Get next raw body data from the Ogg stream (streaming mode)
@@ -229,23 +221,19 @@ public:
      * @param input Input data pointer
      * @param input_len Available input data length
      * @return OggDemuxState with result, bytes_consumed (header + body bytes), and packet data
+     *
+     * Usage:
+     * @code
+     * OggDemuxState state = demuxer.get_next_data(input, len);
+     * if (state.result == OGG_OK) {
+     *     // Use packet.data before advancing input (it points into the input buffer)
+     *     decoder.decode(state.packet.data, state.packet.length);
+     * }
+     * input += state.bytes_consumed;
+     * len -= state.bytes_consumed;
+     * @endcode
      */
-    MICRO_OGG_NODISCARD
     OggDemuxState get_next_data(const uint8_t* input, size_t input_len);
-
-    /**
-     * @brief Demux data and extract the next complete packet
-     *
-     * Zero-copy design: packet.data may point directly to user's input buffer
-     * when the packet is complete and doesn't require reassembly. Otherwise, it
-     * points to an internal buffer. The pointer is only valid until the next call.
-     *
-     * @param input Input data pointer
-     * @param input_len Available input data length
-     * @return OggDemuxState containing result, bytes consumed, and packet data
-     */
-    MICRO_OGG_NODISCARD
-    OggDemuxState get_next_packet(const uint8_t* input, size_t input_len);
 
     /**
      * @brief Reset demuxer state
@@ -340,11 +328,11 @@ private:
     };
 
     // Parse Ogg page header from raw bytes
-    static OggDemuxResult parse_page_header(const uint8_t* data, size_t data_len,
-                                            OggPageHeader& header, size_t& header_size);
+    OggDemuxResult parse_page_header(const uint8_t* data, size_t data_len, OggPageHeader& header,
+                                     size_t& header_size);
 
     // Sum segment table lacing values to get total page body size
-    static size_t calculate_body_size(const uint8_t* segment_table, uint8_t segment_count);
+    size_t calculate_body_size(const uint8_t* segment_table, uint8_t segment_count);
 
     // Grow internal buffer to accommodate needed_size bytes
     GrowBufferResult grow_buffer(size_t needed_size);
@@ -432,57 +420,58 @@ private:
         STATE_PROCESSING_SEGMENTS        // Processing segments from page
     };
 
-    // Struct fields
-    OggDemuxerConfig config_;
-    OggPageHeader current_page_{};
-    PacketInfo current_span_{};  // Span of the packet at the segment cursor (see begin_packet_span)
+    // Member ordering: inline array first (so segment_table_ initializer can reference it),
+    // then pointers, size_t, uint64_t, structs, uint32_t, and finally uint8_t/bool
 
-    // Pointer fields
-    uint8_t* internal_buffer_{nullptr};  // Packet assembly buffer
-    // Points into page_header_staging_ past the fixed header
-    uint8_t* segment_table_{page_header_staging_ + OGG_PAGE_HEADER_SIZE};
+    // Fixed inline buffer for header accumulation (27-byte header + up to 255-byte segment table)
+    uint8_t page_header_staging_[282]{};
 
-    // 64-bit fields
-    int64_t granule_position_{0};  // Page-level granule position
+    // 8-byte aligned: pointers
+    uint8_t* segment_table_{page_header_staging_ + 27};  // Points into page_header_staging_ + 27
+    uint8_t* internal_buffer_{nullptr};                  // Packet assembly buffer
 
-    // size_t fields
+    // 8-byte aligned: size_t
+    size_t page_header_staging_size_{0};
     size_t internal_buffer_capacity_{0};  // Current allocated buffer size
-    size_t max_buffer_size_{0};           // Maximum buffer size limit
     size_t min_buffer_size_{0};           // Minimum/initial buffer size
-    size_t packet_assembly_size_{0};      // Size of packet being assembled
+    size_t max_buffer_size_{0};           // Maximum buffer size limit
     size_t page_body_bytes_consumed_{0};  // Total bytes consumed from current page body
     size_t page_body_size_{0};            // Total page body size (cached from segment table)
-    size_t page_header_staging_size_{0};
-    size_t span_remaining_{0};  // Unconsumed bytes of the current packet span
+    size_t packet_assembly_size_{0};      // Size of packet being assembled
+    size_t span_remaining_{0};            // Unconsumed bytes of the current packet span
 
-    // 32-bit fields
+    // 8-byte aligned: int64_t
+    int64_t granule_position_{0};  // Page-level granule position
+
+    // Structs (contain mixed sizes, place after 8-byte types)
+    OggPageHeader current_page_{};
+    OggDemuxerConfig config_;
+    PacketInfo current_span_{};  // Span of the packet at the segment cursor (see begin_packet_span)
+
+    // 4-byte aligned: uint32_t
+    uint32_t stream_serial_{0};
     uint32_t expected_page_sequence_{0};
     uint32_t incremental_crc_{0};  // CRC accumulator for incremental validation
-    uint32_t stream_serial_{0};
 
-    // 8-bit fields
-    ConsumptionMode active_mode_{
-        ConsumptionMode::UNSET};     // Active consumption method (mode-switch guard)
-    bool assembling_packet_{false};  // True if currently assembling a packet
-    bool bos_flag_used_{false};      // BOS flag only applies to first packet
-    bool current_packet_is_bos_{false};
-    uint8_t current_segment_index_{0};  // Segment where the current/next packet span starts
-    bool enable_crc_{false};            // Enable/disable CRC validation
-    // Fixed inline buffer for header accumulation (27-byte header + up to 255-byte segment table)
-    uint8_t page_header_staging_[OGG_MAX_HEADER_SIZE]{};
-    bool previous_page_ended_with_continued_packet_{false};  // RFC 3533 tracking
-    bool skipping_packet_{false};  // True if skipping a packet that's too large to buffer
-    bool span_active_{false};      // True while the current span is partially consumed
+    // 1-byte aligned: uint8_t and bool (grouped to minimize padding)
     State state_{STATE_EXPECT_PAGE_HEADER};
+    ConsumptionMode active_mode_{
+        ConsumptionMode::UNSET};        // Active consumption method (mode-switch guard)
+    uint8_t current_segment_index_{0};  // Segment where the current/next packet span starts
+    bool span_active_{false};           // True while the current span is partially consumed
+    bool assembling_packet_{false};     // True if currently assembling a packet
+    bool skipping_packet_{false};       // True if skipping a packet that's too large to buffer
+    bool previous_page_ended_with_continued_packet_{false};  // RFC 3533 tracking
     bool stream_initialized_{false};
+    bool current_packet_is_bos_{false};
+    bool bos_flag_used_{false};  // BOS flag only applies to first packet
+    bool enable_crc_{false};     // Enable/disable CRC validation
 
 #ifdef MICRO_OGG_DEMUXER_DEBUG
-    // Statistics (only enabled with MICRO_OGG_DEMUXER_DEBUG). The packet
-    // counters also re-zero on reset(); the capacity peak intentionally does
-    // not, since the internal buffer itself survives reset().
-    size_t zero_copy_packets_{0};     // Number of packets returned via zero-copy
-    size_t buffered_packets_{0};      // Number of packets that required buffering
-    size_t peak_buffer_capacity_{0};  // Peak internal buffer capacity reached
+    // Statistics (only enabled with MICRO_OGG_DEMUXER_DEBUG)
+    size_t zero_copy_packets_;     // Number of packets returned via zero-copy
+    size_t buffered_packets_;      // Number of packets that required buffering
+    size_t peak_buffer_capacity_;  // Peak internal buffer capacity reached
 #endif
 };
 

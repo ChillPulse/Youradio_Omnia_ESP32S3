@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "micro_flac/flac_decoder.h"
+#include "flac_decoder.h"  // OMNIA-PATCH Log59: flat vendor layout (single include path)
 
 #include "alloc.h"
 #include "bit_reader.h"
@@ -24,29 +24,13 @@
 #include "pcm_packing.h"
 #ifndef MICRO_FLAC_DISABLE_OGG
 #include "micro_ogg/ogg_demuxer.h"
-#endif
 
-#include <new> // std::nothrow
+// OMNIA-PATCH Log59: millisecond clock for the optional decode_ogg time budget.
+// The budget yields ONLY after real input progress (see decode_ogg), so it can
+// never produce a NEED_MORE_DATA with bytes_consumed==0 while input remains.
 #if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
 #include <esp_timer.h>
 #endif
-
-#ifdef ARDUINO_ARCH_ESP32
-#include <esp_heap_caps.h>
-#endif
-
-#ifdef ARDUINO_ARCH_ESP32
-static void* ogg_psram_alloc(size_t s) {
-    return heap_caps_malloc(s, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-}
-static void* ogg_psram_realloc(void* p, size_t s) {
-    return heap_caps_realloc(p, s, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-}
-static void ogg_psram_free(void* p) {
-    heap_caps_free(p);
-}
-#endif
-
 static inline uint32_t mf_millis() {
 #if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
     return (uint32_t)(esp_timer_get_time() / 1000ULL);
@@ -54,6 +38,7 @@ static inline uint32_t mf_millis() {
     return 0;
 #endif
 }
+#endif
 
 #include <algorithm>
 #include <cassert>
@@ -274,20 +259,8 @@ FLACDecoderResult FLACDecoder::decode_impl(const uint8_t* input, size_t input_le
             this->detect_buffer_[2] == 'g' && this->detect_buffer_[3] == 'S') {
 #ifndef MICRO_FLAC_DISABLE_OGG
             this->container_type_ = ContainerType::OGG_FLAC;
-            // Streaming mode: configure Ogg demuxer with large buffer for FLAC radio (default 8KB too small)
-            micro_ogg::OggDemuxerConfig cfg;
-            cfg.min_buffer_size = 16384;
-            cfg.max_buffer_size = 1024 * 1024; // 1MB max packet assembly buffer for Ogg-FLAC
-            cfg.enable_crc = false;
-#ifdef ARDUINO_ARCH_ESP32
-            cfg.alloc = ogg_psram_alloc;
-            cfg.realloc = ogg_psram_realloc;
-            cfg.free = ogg_psram_free;
-#endif
-            this->ogg_demuxer_.reset(new (std::nothrow) micro_ogg::OggDemuxer(cfg));
-            if (!this->ogg_demuxer_) {
-                return this->set_fatal_error(FLAC_DECODER_ERROR_MEMORY_ALLOCATION);
-            }
+            // Streaming mode: only a 282-byte header staging buffer is needed
+            this->ogg_demuxer_ = std::make_unique<micro_ogg::OggDemuxer>();
 #else
             return this->set_fatal_error(FLAC_DECODER_ERROR_INPUT_INVALID);
 #endif
@@ -477,13 +450,7 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         this->detect_buffer_len_ = 0;
         // detect_buffer_fed_ stays false for decode_native reuse
 
-        if (state.result == micro_ogg::OGG_PACKET_SKIPPED) {
-            // ok, skip and continue
-        } else if (state.result < 0) {
-            // reset demuxer and wait for more data
-            this->ogg_demuxer_->reset();
-            return FLAC_DECODER_NEED_MORE_DATA;
-        } else if (state.result != micro_ogg::OGG_NEED_MORE_DATA && state.result != micro_ogg::OGG_OK) {
+        if (state.result != micro_ogg::OGG_NEED_MORE_DATA && state.result != micro_ogg::OGG_OK) {
             return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
         }
     }
@@ -496,105 +463,72 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
     // (via demuxer consumption) or returns NEED_MORE_DATA when bytes_consumed >= input_len.
     // Malformed files with many tiny Ogg pages may cause many iterations per call, but
     // the count is proportional to input size.
-    // INVARIANT (Log58 root-fix): NEVER return NEED_MORE_DATA with bytes_consumed==0 while
-    // input_len>0 after HEADER/AUDIO phase, except when input is truly insufficient for one
-    // demux step AND the demuxer made no legal progress opportunity.
-    // Prefer bytes_consumed>=1 anti-stuck over outer zero-consume storm.
-    const uint32_t t0 = mf_millis();
-    uint32_t idle_iters = 0;
+    const uint32_t t0 = mf_millis();  // OMNIA-PATCH Log59 (3.5): progress-only budget
     while (true) {
         size_t remaining = input_len - bytes_consumed;
-        auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
 
-        // A) input progress bookkeeping
-        if (state.bytes_consumed > 0) {
-            bytes_consumed += state.bytes_consumed;
-            idle_iters = 0;
-        } else {
-            idle_iters++;
+        // OMNIA-PATCH Log59 (3.5): time budget at iteration boundary — ONLY with progress
+        // (or exhausted input). Never a bare NEED_MORE with 0 consume while input remains.
+        if (bytes_consumed > 0 && (mf_millis() - t0) > 40) {
+            return FLAC_DECODER_NEED_MORE_DATA;
         }
 
-        // B) OGG_NEED_MORE_DATA
+        auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
+        bytes_consumed += state.bytes_consumed;
+
         if (state.result == micro_ogg::OGG_NEED_MORE_DATA) {
             if (this->ogg_eos_seen_) {
                 return FLAC_DECODER_END_OF_STREAM;
             }
-            // If input remains but the demuxer does not eat it, this is NOT "need more".
-            // Spinning until budget and returning consumed=0 caused the outer
-            // zero-consume storm (Log58).
+            // OMNIA-PATCH Log59 (3.4): anti zero-consume. If input remains but the demuxer
+            // did not eat anything, this is NOT "need more": one-shot resync to the next
+            // OggS (skip >= 1 byte), else force 1-byte progress so the outer window advances.
             if (state.bytes_consumed == 0 && remaining > 0) {
-                // Soft-resync once: find next "OggS" in remaining input
                 const uint8_t* p = input + bytes_consumed;
-                size_t r = remaining;
-                size_t k = 1; // skip at least 1 byte to avoid infinite same pos
-                for (; k + 3 < r; k++) {
-                    if (p[k] == 'O' && p[k+1] == 'g' && p[k+2] == 'g' && p[k+3] == 'S') break;
+                size_t k = 1;  // skip at least 1 byte to avoid re-parsing the same position
+                for (; k + 3 < remaining; k++) {
+                    if (p[k] == 'O' && p[k + 1] == 'g' && p[k + 2] == 'g' && p[k + 3] == 'S') break;
                 }
-                if (k + 3 < r) {
+                if (k + 3 < remaining) {
                     this->ogg_demuxer_->reset();
                     bytes_consumed += k;
-                    idle_iters = 0;
                     continue;
                 }
-                // No OggS in this chunk - "eat 0" is forbidden: return NEED_MORE only if
-                // progress already happened in this call; otherwise eat 1 byte so the
-                // outer layer advances the window (anti-stuck).
                 if (bytes_consumed == 0) {
-                    bytes_consumed = 1; // CRITICAL anti-zero-consume
+                    bytes_consumed = 1;  // anti-stuck: guarantee window advance
                 }
                 return FLAC_DECODER_NEED_MORE_DATA;
             }
-            // Normal need-more: either progress was made or input is exhausted
-            return FLAC_DECODER_NEED_MORE_DATA;
-        }
-
-        // C) empty OK / SKIPPED without consume - don't spin
-        if (state.bytes_consumed == 0 &&
-            state.result == micro_ogg::OGG_OK && state.packet.length == 0) {
-            if (bytes_consumed == 0 && remaining > 0) bytes_consumed = 1;
-            return FLAC_DECODER_NEED_MORE_DATA;
-        }
-        if (state.bytes_consumed == 0 && state.result == micro_ogg::OGG_PACKET_SKIPPED) {
-            if (bytes_consumed == 0 && remaining > 0) bytes_consumed = 1;
-            return FLAC_DECODER_NEED_MORE_DATA;
-        }
-
-        // D) time budget - yield ONLY when progress exists OR input exhausted
-        //    (idle_iters is an extra spin guard against pathological demuxer loops)
-        if ((mf_millis() - t0) > 40 || idle_iters > 64) {
-            if (bytes_consumed > 0 || remaining == 0) {
-                return FLAC_DECODER_NEED_MORE_DATA;
-            }
-            // no progress + input remains: allow a bit more time, then anti-stuck
-            if ((mf_millis() - t0) > 80 || idle_iters > 128) {
-                if (bytes_consumed == 0 && remaining > 0) bytes_consumed = 1;
-                return FLAC_DECODER_NEED_MORE_DATA;
-            }
-        }
-
-        // E) errors: radio-tolerant resync (keep Rec53h idea), but ALWAYS move forward
-        if (state.result < 0) {
-            this->ogg_demuxer_->reset();
             if (bytes_consumed < input_len) {
-                const uint8_t* p = input + bytes_consumed;
-                size_t r = input_len - bytes_consumed;
-                size_t k = 0;
-                for (; k + 3 < r; k++) {
-                    if (p[k] == 'O' && p[k+1] == 'g' && p[k+2] == 'g' && p[k+3] == 'S') break;
-                }
-                if (k + 3 < r) {
-                    bytes_consumed += (k == 0 ? 1 : k); // always move
-                    continue;
-                }
+                continue;  // More input available; e.g., next page header after page finalization
             }
-            if (bytes_consumed == 0 && input_len > 0) bytes_consumed = 1;
             return FLAC_DECODER_NEED_MORE_DATA;
         }
 
-        if (state.result == micro_ogg::OGG_PACKET_SKIPPED) {
-            continue; // bytes already accounted in A)
-        }
         if (state.result != micro_ogg::OGG_OK) {
+            // OMNIA-PATCH Log59 (3.3): in AUDIO phase demux errors must NOT latch the decoder
+            // in the ERROR phase forever (Paradise -14 storm). Reset the demuxer, resync to
+            // the next OggS and report a soft NEED_MORE. set_fatal_error remains ONLY for
+            // the pre-HEADER path (container detect / BOS / header parse).
+            if (this->decode_phase_ == DecodePhase::AUDIO) {
+                this->ogg_demuxer_->reset();
+                if (bytes_consumed < input_len) {
+                    const uint8_t* p = input + bytes_consumed;
+                    size_t r = input_len - bytes_consumed;
+                    size_t k = 0;
+                    for (; k + 3 < r; k++) {
+                        if (p[k] == 'O' && p[k + 1] == 'g' && p[k + 2] == 'g' && p[k + 3] == 'S') break;
+                    }
+                    if (k + 3 < r) {
+                        bytes_consumed += (k == 0 ? 1 : k);  // always move forward
+                        continue;
+                    }
+                }
+                if (bytes_consumed == 0 && input_len > 0) {
+                    bytes_consumed = 1;  // anti-stuck
+                }
+                return FLAC_DECODER_NEED_MORE_DATA;
+            }
             return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
         }
 
@@ -646,7 +580,24 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         // must consume all bytes: either streaming them in (NEED_MORE_DATA) or
         // completing a frame (SUCCESS/HEADER_READY). A mismatch means data loss.
         if (native_consumed != body_len) {
-            return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
+            // OMNIA-PATCH Log59 (3.2): radio-tolerant — a mismatch must not be an unconditional
+            // fatal -14 (it masked real frame errors and latched the decoder forever).
+            if (result == FLAC_DECODER_SUCCESS || result == FLAC_DECODER_HEADER_READY) {
+                // leftover tail in the ogg packet after a complete frame: ignore (padding),
+                // keep result, do NOT fatal
+            } else if (result == FLAC_DECODER_NEED_MORE_DATA) {
+                // a partial frame across packets must consume the whole body in Ogg-FLAC;
+                // mismatch on NEED_MORE means lost sync inside the packet -> drop this packet
+                this->reset_frame_state();
+                continue;  // demuxer already advanced past this packet
+            } else if (result < 0) {
+                // surface the REAL frame error as a soft error (no fatal latch in AUDIO phase)
+                this->reset_frame_state();
+                return result;
+            } else {
+                this->reset_frame_state();
+                continue;
+            }
         }
 
         if (result == FLAC_DECODER_NEED_MORE_DATA) {

@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "micro_flac/flac_decoder.h"
+#include "flac_decoder.h"  // OMNIA-PATCH Log59: flat vendor layout (single include path)
 
 #include <cstdint>
 
