@@ -5811,6 +5811,34 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     setChannels(m_mf_channels);
                     setSampleRate(m_mf_sample_rate);
                     setBitsPerSample(m_mf_bits);
+
+                    // --- FLAGSHIP: replicate the important tail of setDecoderItems() without calling legacy FLACGet* ---
+                    if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24) {
+                        AUDIO_ERROR("microflac: Bits per sample must be 8/16/24, found %i", m_sourceBitsPerSample);
+                        stopSong();
+                        return -1;
+                    }
+                    if(getBitsPerSample() != 8 && getBitsPerSample() != 16) {
+                        AUDIO_ERROR("microflac: Bits per sample output must be 8/16, found %i", getBitsPerSample());
+                        stopSong();
+                        return -1;
+                    }
+                    if(getChannels() != 1 && getChannels() != 2) {
+                        AUDIO_ERROR("microflac: Num of channels must be 1/2, found %i", getChannels());
+                        stopSong();
+                        return -1;
+                    }
+
+                    // Clear IIR filter state + recompute coefficients after sample rate change (flagship sound stability)
+                    memset(m_filterBuff, 0, sizeof(m_filterBuff));
+                    IIR_calculateCoefficients(m_gain0, m_gain1, m_gain2);
+                    showCodecParams();
+
+                    // Ensure playing time starts for micro-flac too (legacy path sets this after setDecoderItems())
+                    m_PlayingStartTime = millis();
+
+                    AUDIO_INFO("microflac post-config: IIR recalculated, filters cleared");
+
                     size_t needed = g_mf.get_output_buffer_size_samples(); // interleaved samples = max_block_size * channels
                     free(m_mf_out32);
                     m_mf_out32_cap = needed;
