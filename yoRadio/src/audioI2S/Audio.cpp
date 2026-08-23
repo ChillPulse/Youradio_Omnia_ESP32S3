@@ -34,6 +34,12 @@ constexpr size_t    m_frameSizeWav       = 4096;
 constexpr size_t    m_frameSizeMP3       = 1600 * 2;
 constexpr size_t    m_frameSizeAAC       = 1600;
 constexpr size_t    m_frameSizeFLAC      = UINT16_MAX; // Ogg-FLAC metadata/pages may be large, 65535 max ogg size (was 4096*6=24576)
+// --- Omnia flagship: micro-flac WEB tuning ---
+constexpr uint16_t  MF_WEB_BLOCK_DEFAULT = 32768; // normal mode (less copying in AudioBuffer::getReadPtr)
+constexpr uint16_t  MF_WEB_BLOCK_MAX = UINT16_MAX; // emergency for very large Ogg pages
+constexpr uint16_t  MF_WEB_MIN_DECODE = 8192; // can start decode earlier than maxBlockSize
+constexpr uint8_t   MF_WEB_ZERO_CONSUME_LIMIT = 12; // how many cycles bytes_consumed==0 allowed before reconnect
+constexpr uint8_t   MF_WEB_ZERO_CONSUME_ESCALATE_AT = 3; // when to expand block/feed to 64K
 #ifndef OMNIA_SMALL_OGG_OPUS_VORBIS
 // current "big ogg page" mode
 constexpr size_t    m_frameSizeOPUS      = UINT16_MAX; // Ogg pages may be large (was 2048)
@@ -3988,7 +3994,11 @@ void Audio::processLocalFile() {
             microflac_reset_();
             m_mf_active = true;
                     m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
-                    InBuff.changeMaxBlockSize(8192);
+                    InBuff.changeMaxBlockSize(MF_WEB_BLOCK_DEFAULT);
+                    m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_zeroConsumeCnt = 0;
+                    AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
             AUDIO_INFO("format is flac (micro-flac WEB) - late activation webfile");
         }
     }
@@ -4079,6 +4089,9 @@ void Audio::microflac_reset_(){
     m_mf_pending_total = 0;
     m_mf_pending_off = 0;
     m_mf_waitHeaderSinceMs = 0;
+    m_mf_zeroConsumeCnt = 0;
+    m_mf_feedCap = 0;
+    m_mf_webBlock = 0;
     if(m_mf_prevMaxBlockSize){
         InBuff.changeMaxBlockSize(m_mf_prevMaxBlockSize);
         m_mf_prevMaxBlockSize = 0;
@@ -4191,7 +4204,11 @@ void Audio::processWebStream() {
                     microflac_reset_();
                     m_mf_active = true;
                     m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
-                    InBuff.changeMaxBlockSize(8192);
+                    InBuff.changeMaxBlockSize(MF_WEB_BLOCK_DEFAULT);
+                    m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_zeroConsumeCnt = 0;
+                    AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
                     m_codec = CODEC_FLAC;
                     AUDIO_INFO("format is flac (micro-flac WEB)");
                 } else {
@@ -4220,7 +4237,11 @@ void Audio::processWebStream() {
         microflac_reset_();
         m_mf_active = true;
                     m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
-                    InBuff.changeMaxBlockSize(8192);
+                    InBuff.changeMaxBlockSize(MF_WEB_BLOCK_DEFAULT);
+                    m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_zeroConsumeCnt = 0;
+                    AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
         AUDIO_INFO("format is flac (micro-flac WEB) - late activation");
     }
 
@@ -4296,7 +4317,11 @@ void Audio::processWebFile() {
                     microflac_reset_();
                     m_mf_active = true;
                     m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
-                    InBuff.changeMaxBlockSize(8192);
+                    InBuff.changeMaxBlockSize(MF_WEB_BLOCK_DEFAULT);
+                    m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_zeroConsumeCnt = 0;
+                    AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
                     m_codec = CODEC_FLAC;
                     AUDIO_INFO("format is flac (micro-flac WEB)");
                     return;
@@ -4339,7 +4364,11 @@ void Audio::processWebFile() {
             microflac_reset_();
             m_mf_active = true;
                     m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
-                    InBuff.changeMaxBlockSize(8192);
+                    InBuff.changeMaxBlockSize(MF_WEB_BLOCK_DEFAULT);
+                    m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_zeroConsumeCnt = 0;
+                    AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
             AUDIO_INFO("format is flac (micro-flac WEB) - late activation webfile");
         }
     }
@@ -4701,8 +4730,14 @@ void Audio::playAudioData() {
         m_pad.bytesDecoded = sendBytes(InBuff.getReadPtr(), m_pad.bytesToDecode);
     }
     else{
-        if(InBuff.bufferFilled() >= InBuff.getMaxBlockSize()) m_pad.bytesDecoded = sendBytes(InBuff.getReadPtr(), m_pad.bytesToDecode);
-        else m_pad.bytesDecoded = 0; // Inbuff not filled enough
+        // For micro-flac WEB allow earlier decode at MIN_DECODE, not full maxBlockSize
+        if(m_codec == CODEC_FLAC && m_mf_active){
+            if(InBuff.bufferFilled() >= MF_WEB_MIN_DECODE) m_pad.bytesDecoded = sendBytes(InBuff.getReadPtr(), m_pad.bytesToDecode);
+            else m_pad.bytesDecoded = 0;
+        } else {
+            if(InBuff.bufferFilled() >= InBuff.getMaxBlockSize()) m_pad.bytesDecoded = sendBytes(InBuff.getReadPtr(), m_pad.bytesToDecode);
+            else m_pad.bytesDecoded = 0; // Inbuff not filled enough
+        }
     }
 
     endByTime = (m_codec == CODEC_M4A &&
@@ -5718,18 +5753,35 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
         case CODEC_FLAC: {
             bool isWeb = (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE);
             if(isWeb){
-                // Feed micro-flac in small chunks to avoid long decode loops / CPU stalls
-                const size_t FEED_MAX = 8192;
-                if(len > FEED_MAX) len = FEED_MAX;
                 // WEB FLAC -> micro-flac backend (radio only)
                 if(!m_mf_active){
                     microflac_reset_();
                     m_mf_active = true;
                     m_mf_prevMaxBlockSize = InBuff.getMaxBlockSize();
-                    InBuff.changeMaxBlockSize(8192);
+                    InBuff.changeMaxBlockSize(MF_WEB_BLOCK_DEFAULT);
+                    m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
+                    m_mf_zeroConsumeCnt = 0;
+                    AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
                 }
                 if(!m_mf_header_ready && m_mf_waitHeaderSinceMs == 0){
                     m_mf_waitHeaderSinceMs = millis();
+                }
+                // --- microflac feed limiting (adaptive) ---
+                if(m_mf_feedCap == 0) m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
+                if(m_mf_feedCap > InBuff.getMaxBlockSize()) m_mf_feedCap = InBuff.getMaxBlockSize();
+                if(len > m_mf_feedCap) len = m_mf_feedCap;
+                // invariant: blocksize must be >= MIN_DECODE
+                if(m_mf_active && InBuff.getMaxBlockSize() < MF_WEB_MIN_DECODE){
+                    AUDIO_ERROR("microflac invariant: maxBlockSize too small (%u) -> fix", (unsigned)InBuff.getMaxBlockSize());
+                    InBuff.changeMaxBlockSize(MF_WEB_BLOCK_DEFAULT);
+                    m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
+                    if(m_mf_feedCap < MF_WEB_BLOCK_DEFAULT) m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
+                }
+                // invariant: header_ready but out32 missing
+                if(m_mf_header_ready && (!m_mf_out32 || m_mf_out32_cap == 0)){
+                    AUDIO_ERROR("microflac invariant: header_ready but out32 missing -> reconnect");
+                    stallReconnect("mf_out32_missing");
                 }
                 size_t bytes_consumed = 0;
                 size_t samples_decoded = 0;
@@ -5744,6 +5796,14 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                 auto mf_res = g_mf.decode(data, len, out, out_cap, bytes_consumed, samples_decoded);
                 if(mf_res == micro_flac::FLAC_DECODER_HEADER_READY){
                     const auto& info = g_mf.get_stream_info();
+                    if(!info.is_valid()){
+                        AUDIO_ERROR("microflac HEADER_READY but stream_info invalid -> reconnect");
+                        stallReconnect("mf_bad_streaminfo");
+                        m_sbyt.bytesLeft = len; // не съели ничего
+                        bytesDecoded = 0;
+                        res = FLAC_DECODE_FRAMES_LOOP;
+                        break;
+                    }
                     m_mf_sample_rate = info.sample_rate();
                     m_mf_channels = info.num_channels();
                     m_mf_bits = info.bits_per_sample();
@@ -5785,6 +5845,23 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                        InBuff.bufferFilled() > 60000) {
                         AUDIO_ERROR("microflac: HEADER_READY timeout -> reconnect");
                         stallReconnect("mf_header_timeout");
+                    }
+                    // zero-consume self-healing: count cycles with bytes_consumed==0, escalate to 64K and reconnect limit
+                    if(bytes_consumed == 0){
+                        m_mf_zeroConsumeCnt++;
+                        if(m_mf_zeroConsumeCnt >= MF_WEB_ZERO_CONSUME_ESCALATE_AT && m_mf_feedCap < MF_WEB_BLOCK_MAX){
+                            m_mf_feedCap = MF_WEB_BLOCK_MAX;
+                            InBuff.changeMaxBlockSize(MF_WEB_BLOCK_MAX);
+                            m_mf_webBlock = MF_WEB_BLOCK_MAX;
+                            AUDIO_INFO("microflac escalate to max block %u after zero consume", (unsigned)MF_WEB_BLOCK_MAX);
+                        }
+                        if(m_mf_zeroConsumeCnt >= MF_WEB_ZERO_CONSUME_LIMIT){
+                            AUDIO_ERROR("microflac zero consume limit -> reconnect");
+                            stallReconnect("mf_zero_consume");
+                            m_mf_zeroConsumeCnt = 0;
+                        }
+                    } else {
+                        m_mf_zeroConsumeCnt = 0;
                     }
                     // Tell core loop "need more data" using existing FLAC continue codepath
                     res = FLAC_DECODE_FRAMES_LOOP;
