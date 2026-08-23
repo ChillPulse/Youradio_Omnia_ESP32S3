@@ -759,6 +759,8 @@ private:
     uint8_t         m_mf_zeroConsumeCnt = 0; // consecutive NEED_MORE_DATA with bytes_consumed==0
     uint16_t        m_mf_feedCap = 0; // max bytes per g_mf.decode() call
     uint16_t        m_mf_webBlock = 0; // current maxBlockSize set for WEB micro-flac
+    uint32_t        m_mf_headerReadyAtMs = 0; // millis() when HEADER_READY was reached (grace window)
+    uint32_t        m_mf_lastProgressMs = 0; // last time bytes_consumed>0 or SUCCESS
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;

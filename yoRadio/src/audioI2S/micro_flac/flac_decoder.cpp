@@ -498,11 +498,18 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
     // the count is proportional to input size.
     const uint32_t t0 = mf_millis();
     while (true) {
-        if((mf_millis() - t0) > 12){
-            // Budget exceeded: return and continue next call (prevents hangs on embedded)
-            return FLAC_DECODER_NEED_MORE_DATA;
-        }
         size_t remaining = input_len - bytes_consumed;
+        if((mf_millis() - t0) > 40){  // FLAC frames can exceed 12ms on ESP32-S3
+            // Only yield if we already made input progress OR no input left to chew.
+            // Returning with 0 consume while input remains causes outer "zero-consume stall".
+            if(bytes_consumed > 0 || remaining == 0){
+                return FLAC_DECODER_NEED_MORE_DATA;
+            }
+            // else: allow a bit more time this call
+            if((mf_millis() - t0) > 80){
+                return FLAC_DECODER_NEED_MORE_DATA;
+            }
+        }
         auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
         // "No progress" is only a problem if we also have no packet to process.
         // micro_ogg may legally return OGG_OK with packet ready and bytes_consumed==0 (from internal buffer).

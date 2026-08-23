@@ -35,11 +35,13 @@ constexpr size_t    m_frameSizeMP3       = 1600 * 2;
 constexpr size_t    m_frameSizeAAC       = 1600;
 constexpr size_t    m_frameSizeFLAC      = UINT16_MAX; // Ogg-FLAC metadata/pages may be large, 65535 max ogg size (was 4096*6=24576)
 // --- Omnia flagship: micro-flac WEB tuning ---
-constexpr uint16_t  MF_WEB_BLOCK_DEFAULT = 32768; // normal mode (less copying in AudioBuffer::getReadPtr)
+constexpr uint16_t  MF_WEB_BLOCK_DEFAULT = 65535; // full block right away for Ogg-FLAC radio (not 32768)
 constexpr uint16_t  MF_WEB_BLOCK_MAX = UINT16_MAX; // emergency for very large Ogg pages
-constexpr uint16_t  MF_WEB_MIN_DECODE = 8192; // can start decode earlier than maxBlockSize
-constexpr uint8_t   MF_WEB_ZERO_CONSUME_LIMIT = 12; // how many cycles bytes_consumed==0 allowed before reconnect
-constexpr uint8_t   MF_WEB_ZERO_CONSUME_ESCALATE_AT = 3; // when to expand block/feed to 64K
+constexpr uint16_t  MF_WEB_MIN_DECODE = 4096; // can start decode earlier than maxBlockSize
+constexpr uint8_t   MF_WEB_ZERO_CONSUME_LIMIT = 80; // how many cycles bytes_consumed==0 allowed before reconnect (was 12 - too early)
+constexpr uint8_t   MF_WEB_ZERO_CONSUME_ESCALATE_AT = 20; // informational threshold (no longer triggers reconnect)
+constexpr uint32_t  MF_WEB_GRACE_AFTER_HEADER_MS = 2500; // after HEADER_READY: 2.5s no reconnect due to zero-consume
+constexpr uint32_t  MF_WEB_STALL_MS = 4000;              // generic time-based stall threshold
 #ifndef OMNIA_SMALL_OGG_OPUS_VORBIS
 // current "big ogg page" mode
 constexpr size_t    m_frameSizeOPUS      = UINT16_MAX; // Ogg pages may be large (was 2048)
@@ -3998,6 +4000,8 @@ void Audio::processLocalFile() {
                     m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
                     m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
                     m_mf_zeroConsumeCnt = 0;
+                    m_mf_headerReadyAtMs = 0;
+                    m_mf_lastProgressMs = millis();
                     AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
             AUDIO_INFO("format is flac (micro-flac WEB) - late activation webfile");
         }
@@ -4092,6 +4096,8 @@ void Audio::microflac_reset_(){
     m_mf_zeroConsumeCnt = 0;
     m_mf_feedCap = 0;
     m_mf_webBlock = 0;
+    m_mf_headerReadyAtMs = 0;
+    m_mf_lastProgressMs = 0;
     if(m_mf_prevMaxBlockSize){
         InBuff.changeMaxBlockSize(m_mf_prevMaxBlockSize);
         m_mf_prevMaxBlockSize = 0;
@@ -4208,6 +4214,8 @@ void Audio::processWebStream() {
                     m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
                     m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
                     m_mf_zeroConsumeCnt = 0;
+                    m_mf_headerReadyAtMs = 0;
+                    m_mf_lastProgressMs = millis();
                     AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
                     m_codec = CODEC_FLAC;
                     AUDIO_INFO("format is flac (micro-flac WEB)");
@@ -4241,6 +4249,8 @@ void Audio::processWebStream() {
                     m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
                     m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
                     m_mf_zeroConsumeCnt = 0;
+                    m_mf_headerReadyAtMs = 0;
+                    m_mf_lastProgressMs = millis();
                     AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
         AUDIO_INFO("format is flac (micro-flac WEB) - late activation");
     }
@@ -4321,6 +4331,8 @@ void Audio::processWebFile() {
                     m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
                     m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
                     m_mf_zeroConsumeCnt = 0;
+                    m_mf_headerReadyAtMs = 0;
+                    m_mf_lastProgressMs = millis();
                     AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
                     m_codec = CODEC_FLAC;
                     AUDIO_INFO("format is flac (micro-flac WEB)");
@@ -4368,6 +4380,8 @@ void Audio::processWebFile() {
                     m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
                     m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
                     m_mf_zeroConsumeCnt = 0;
+                    m_mf_headerReadyAtMs = 0;
+                    m_mf_lastProgressMs = millis();
                     AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
             AUDIO_INFO("format is flac (micro-flac WEB) - late activation webfile");
         }
@@ -4781,6 +4795,33 @@ void Audio::playAudioData() {
     }
 
 exit:
+    // micro-flac: drain freshly decoded pending PCM immediately after sendBytes
+    // (avoids "SUCCESS happened but PCM only leaves on next tick")
+    if(m_codec == CODEC_FLAC && m_mf_active && m_validSamples == 0 &&
+       m_mf_pending_off < m_mf_pending_total && m_mf_out32){
+        const size_t remain = m_mf_pending_total - m_mf_pending_off;
+        const size_t chunk = (remain > m_outbuffSize) ? m_outbuffSize : remain;
+        int bps = m_mf_bits ? (int)m_mf_bits : 16;
+        for(size_t i = 0; i < chunk; i++){
+            int32_t v = m_mf_out32[m_mf_pending_off + i];
+            // micro-flac int32 output is left-justified; normalize to bps
+            if(bps < 32) v >>= (32 - bps);
+            // scale to 16-bit output
+            if(bps > 16) v >>= (bps - 16);
+            else if(bps < 16) v <<= (16 - bps);
+            if(v > 32767) v = 32767;
+            if(v < -32768) v = -32768;
+            m_outBuff[i] = (int16_t)v;
+        }
+        m_mf_pending_off += chunk;
+        // validSamples is "samples per channel" in your pipeline: chunk is interleaved
+        m_validSamples = chunk / (m_channels ? m_channels : 2);
+        playChunk();
+        // keep watchdog happy
+        m_lastGoodDecodeMs = millis();
+        m_resyncSkipCnt = 0;
+        m_stallReconnectTries = 0;
+    }
     m_f_audioTaskIsDecoding = false;
     return;
 }
@@ -5762,159 +5803,218 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
                     m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
                     m_mf_zeroConsumeCnt = 0;
+                    m_mf_headerReadyAtMs = 0;
+                    m_mf_lastProgressMs = millis();
                     AUDIO_INFO("microflac WEB activated: block=%u feedCap=%u", (unsigned)InBuff.getMaxBlockSize(), (unsigned)m_mf_feedCap);
                 }
                 if(!m_mf_header_ready && m_mf_waitHeaderSinceMs == 0){
                     m_mf_waitHeaderSinceMs = millis();
                 }
-                // --- microflac feed limiting (adaptive) ---
-                if(m_mf_feedCap == 0) m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
-                if(m_mf_feedCap > InBuff.getMaxBlockSize()) m_mf_feedCap = InBuff.getMaxBlockSize();
-                if(len > m_mf_feedCap) len = m_mf_feedCap;
-                // invariant: blocksize must be >= MIN_DECODE
-                if(m_mf_active && InBuff.getMaxBlockSize() < MF_WEB_MIN_DECODE){
-                    AUDIO_ERROR("microflac invariant: maxBlockSize too small (%u) -> fix", (unsigned)InBuff.getMaxBlockSize());
+                if(m_mf_lastProgressMs == 0) m_mf_lastProgressMs = millis();
+
+                // feed all we can in one contiguous window
+                {
+                    size_t avail = len; // len already = min(bufferFilled, maxBlockSize) from playAudioData
+                    if(avail > InBuff.getMaxBlockSize()) avail = InBuff.getMaxBlockSize();
+                    if(avail > 65535) avail = 65535;
+                    len = avail;
+                }
+
+                // ensure block is max for ogg-flac
+                if(InBuff.getMaxBlockSize() < MF_WEB_BLOCK_DEFAULT){
                     InBuff.changeMaxBlockSize(MF_WEB_BLOCK_DEFAULT);
                     m_mf_webBlock = MF_WEB_BLOCK_DEFAULT;
-                    if(m_mf_feedCap < MF_WEB_BLOCK_DEFAULT) m_mf_feedCap = MF_WEB_BLOCK_DEFAULT;
                 }
+                if(m_mf_feedCap < MF_WEB_BLOCK_DEFAULT) m_mf_feedCap = MF_WEB_BLOCK_DEFAULT; // keep field consistent with block
+
                 // invariant: header_ready but out32 missing
                 if(m_mf_header_ready && (!m_mf_out32 || m_mf_out32_cap == 0)){
                     AUDIO_ERROR("microflac invariant: header_ready but out32 missing -> reconnect");
                     stallReconnect("mf_out32_missing");
+                    return 0; // CRITICAL: never continue after reconnect
                 }
-                size_t bytes_consumed = 0;
-                size_t samples_decoded = 0;
-                int32_t* out = nullptr;
-                size_t out_cap = 0;
-                if(m_mf_header_ready && m_mf_out32 && m_mf_out32_cap){
-                    out = m_mf_out32;
-                    out_cap = m_mf_out32_cap;
-                }
-                // до HEADER_READY out может быть nullptr — это нормально по micro-flac API
-                // out may be nullptr before HEADER_READY - micro-flac API allows this
-                auto mf_res = g_mf.decode(data, len, out, out_cap, bytes_consumed, samples_decoded);
-                if(mf_res == micro_flac::FLAC_DECODER_HEADER_READY){
-                    const auto& info = g_mf.get_stream_info();
-                    if(!info.is_valid()){
-                        AUDIO_ERROR("microflac HEADER_READY but stream_info invalid -> reconnect");
-                        stallReconnect("mf_bad_streaminfo");
-                        m_sbyt.bytesLeft = len; // не съели ничего
-                        bytesDecoded = 0;
-                        res = FLAC_DECODE_FRAMES_LOOP;
+
+                // --- flagship local decode loop: keep decoding while input yields progress ---
+                size_t total_consumed = 0;
+                const uint8_t* p = data;
+                size_t left = len;
+                int loops = 0;
+                const int MAX_LOOPS = 8;
+                bool fatal_before_header = false;
+
+                while(loops++ < MAX_LOOPS && left > 0){
+                    size_t bytes_consumed = 0;
+                    size_t samples_decoded = 0;
+                    int32_t* out = (m_mf_header_ready && m_mf_out32 && m_mf_out32_cap) ? m_mf_out32 : nullptr;
+                    size_t out_cap = out ? m_mf_out32_cap : 0;
+
+                    // out may be nullptr before HEADER_READY - micro-flac API allows this
+                    auto mf_res = g_mf.decode(p, left, out, out_cap, bytes_consumed, samples_decoded);
+
+                    // progress bookkeeping
+                    if(bytes_consumed > 0){
+                        p += bytes_consumed;
+                        left -= bytes_consumed;
+                        total_consumed += bytes_consumed;
+                        m_mf_zeroConsumeCnt = 0;
+                        m_mf_lastProgressMs = millis();
+                    }
+
+                    if(mf_res == micro_flac::FLAC_DECODER_HEADER_READY){
+                        const auto& info = g_mf.get_stream_info();
+                        if(!info.is_valid()){
+                            AUDIO_ERROR("microflac HEADER_READY but stream_info invalid -> reconnect");
+                            stallReconnect("mf_bad_streaminfo");
+                            return 0; // CRITICAL: never continue after reconnect
+                        }
+                        m_mf_sample_rate = info.sample_rate();
+                        m_mf_channels = info.num_channels();
+                        m_mf_bits = info.bits_per_sample();
+                        setChannels(m_mf_channels);
+                        setSampleRate(m_mf_sample_rate);
+                        setBitsPerSample(m_mf_bits);
+
+                        // --- FLAGSHIP: replicate the important tail of setDecoderItems() without calling legacy FLACGet* ---
+                        if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24) {
+                            AUDIO_ERROR("microflac: Bits per sample must be 8/16/24, found %i", m_sourceBitsPerSample);
+                            stopSong();
+                            return -1;
+                        }
+                        if(getBitsPerSample() != 8 && getBitsPerSample() != 16) {
+                            AUDIO_ERROR("microflac: Bits per sample output must be 8/16, found %i", getBitsPerSample());
+                            stopSong();
+                            return -1;
+                        }
+                        if(getChannels() != 1 && getChannels() != 2) {
+                            AUDIO_ERROR("microflac: Num of channels must be 1/2, found %i", getChannels());
+                            stopSong();
+                            return -1;
+                        }
+
+                        // Clear IIR filter state + recompute coefficients after sample rate change (flagship sound stability)
+                        memset(m_filterBuff, 0, sizeof(m_filterBuff));
+                        IIR_calculateCoefficients(m_gain0, m_gain1, m_gain2);
+                        showCodecParams();
+
+                        // Ensure playing time starts for micro-flac too (legacy path sets this after setDecoderItems())
+                        m_PlayingStartTime = millis();
+
+                        AUDIO_INFO("microflac post-config: IIR recalculated, filters cleared");
+
+                        size_t needed = g_mf.get_output_buffer_size_samples(); // interleaved samples = max_block_size * channels
+                        free(m_mf_out32);
+                        m_mf_out32_cap = needed;
+                        m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap*sizeof(int32_t));
+                        if(!m_mf_out32){
+                            AUDIO_ERROR("microflac: out32 alloc failed (%u samples)", (unsigned)needed);
+                            m_mf_out32_cap = 0;
+                            stopSong();
+                            return -1;
+                        }
+                        m_mf_header_ready = true;
+                        // micro-flac already set params from stream info, do not use legacy setDecoderItems()
+                        m_sbyt.f_setDecodeParamsOnce = false;
+                        m_mf_headerReadyAtMs = millis();
+                        m_mf_lastProgressMs = millis();
+                        AUDIO_INFO("microflac HEADER_READY sr=%lu ch=%u bps=%u consumed=%u left=%u",
+                                   (unsigned long)m_mf_sample_rate, m_mf_channels, m_mf_bits,
+                                   (unsigned)bytes_consumed, (unsigned)left);
+                        // IMPORTANT: continue loop immediately to decode first audio frames
+                        continue;
+                    }
+
+                    if(mf_res == micro_flac::FLAC_DECODER_SUCCESS){
+                        if(samples_decoded && m_mf_out32){
+                            m_mf_pending_total = samples_decoded;
+                            m_mf_pending_off = 0;
+                            m_lastGoodDecodeMs = millis();
+                            m_mf_lastProgressMs = millis();
+                            static uint32_t s_mfSuccessCnt = 0;
+                            if((s_mfSuccessCnt++ % 25) == 0){
+                                AUDIO_INFO("microflac SUCCESS samples=%u consumed=%u total_cons=%u",
+                                           (unsigned)samples_decoded, (unsigned)bytes_consumed, (unsigned)total_consumed);
+                            }
+                        }
+                        // stop loop; PCM will be drained in playAudioData pending path
                         break;
                     }
-                    m_mf_sample_rate = info.sample_rate();
-                    m_mf_channels = info.num_channels();
-                    m_mf_bits = info.bits_per_sample();
-                    m_mf_header_ready = true;
-                    setChannels(m_mf_channels);
-                    setSampleRate(m_mf_sample_rate);
-                    setBitsPerSample(m_mf_bits);
 
-                    // --- FLAGSHIP: replicate the important tail of setDecoderItems() without calling legacy FLACGet* ---
-                    if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24) {
-                        AUDIO_ERROR("microflac: Bits per sample must be 8/16/24, found %i", m_sourceBitsPerSample);
-                        stopSong();
-                        return -1;
-                    }
-                    if(getBitsPerSample() != 8 && getBitsPerSample() != 16) {
-                        AUDIO_ERROR("microflac: Bits per sample output must be 8/16, found %i", getBitsPerSample());
-                        stopSong();
-                        return -1;
-                    }
-                    if(getChannels() != 1 && getChannels() != 2) {
-                        AUDIO_ERROR("microflac: Num of channels must be 1/2, found %i", getChannels());
-                        stopSong();
-                        return -1;
-                    }
-
-                    // Clear IIR filter state + recompute coefficients after sample rate change (flagship sound stability)
-                    memset(m_filterBuff, 0, sizeof(m_filterBuff));
-                    IIR_calculateCoefficients(m_gain0, m_gain1, m_gain2);
-                    showCodecParams();
-
-                    // Ensure playing time starts for micro-flac too (legacy path sets this after setDecoderItems())
-                    m_PlayingStartTime = millis();
-
-                    AUDIO_INFO("microflac post-config: IIR recalculated, filters cleared");
-
-                    size_t needed = g_mf.get_output_buffer_size_samples(); // interleaved samples = max_block_size * channels
-                    free(m_mf_out32);
-                    m_mf_out32_cap = needed;
-                    m_mf_out32 = (int32_t*) ps_malloc(m_mf_out32_cap*sizeof(int32_t));
-                    if(!m_mf_out32){
-                        AUDIO_ERROR("microflac: out32 alloc failed (%u samples)", (unsigned)needed);
-                        stopSong();
-                        return -1;
-                    }
-                    m_mf_header_ready = true;
-                    m_sbyt.bytesLeft = len - bytes_consumed;
-                    bytesDecoded = bytes_consumed;
-                    res = 0;
-                    // micro-flac already set params from stream info, do not use legacy setDecoderItems()
-                    m_sbyt.f_setDecodeParamsOnce = false;
-                    break;
-                } else if(mf_res == micro_flac::FLAC_DECODER_SUCCESS){
-                    // store pending decoded PCM (interleaved samples) in m_mf_out32
-                    m_mf_pending_total = samples_decoded;
-                    m_mf_pending_off = 0;
-                    // consume input bytes and let playAudioData() output chunks (it will immediately output first chunk)
-                    m_sbyt.bytesLeft = len - bytes_consumed;
-                    bytesDecoded = bytes_consumed;
-                    res = 0;
-                    break;
-                } else if(mf_res == micro_flac::FLAC_DECODER_NEED_MORE_DATA){
-                    m_sbyt.bytesLeft = len - bytes_consumed;
-                    bytesDecoded = bytes_consumed;
-                    // If we can't reach HEADER_READY for too long -> reconnect (avoid infinite silence)
-                    if(!m_mf_header_ready && m_mf_waitHeaderSinceMs &&
-                       (millis() - m_mf_waitHeaderSinceMs) > 6000 &&
-                       InBuff.bufferFilled() > 60000) {
-                        AUDIO_ERROR("microflac: HEADER_READY timeout -> reconnect");
-                        stallReconnect("mf_header_timeout");
-                    }
-                    // zero-consume self-healing: count cycles with bytes_consumed==0, escalate to 64K and reconnect limit
-                    if(bytes_consumed == 0){
-                        m_mf_zeroConsumeCnt++;
-                        if(m_mf_zeroConsumeCnt >= MF_WEB_ZERO_CONSUME_ESCALATE_AT && m_mf_feedCap < MF_WEB_BLOCK_MAX){
-                            m_mf_feedCap = MF_WEB_BLOCK_MAX;
-                            InBuff.changeMaxBlockSize(MF_WEB_BLOCK_MAX);
-                            m_mf_webBlock = MF_WEB_BLOCK_MAX;
-                            AUDIO_INFO("microflac escalate to max block %u after zero consume", (unsigned)MF_WEB_BLOCK_MAX);
+                    if(mf_res == micro_flac::FLAC_DECODER_NEED_MORE_DATA){
+                        if(bytes_consumed == 0){
+                            m_mf_zeroConsumeCnt++;
+                            // soft log first few
+                            if(m_mf_zeroConsumeCnt <= 3 || (m_mf_zeroConsumeCnt % 20) == 0){
+                                AUDIO_INFO("microflac NEED_MORE zero_cons=%u filled=%u header=%u left=%u",
+                                           (unsigned)m_mf_zeroConsumeCnt,
+                                           (unsigned)InBuff.bufferFilled(),
+                                           (unsigned)m_mf_header_ready,
+                                           (unsigned)left);
+                            }
                         }
-                        if(m_mf_zeroConsumeCnt >= MF_WEB_ZERO_CONSUME_LIMIT){
-                            AUDIO_ERROR("microflac zero consume limit -> reconnect");
-                            stallReconnect("mf_zero_consume");
-                            m_mf_zeroConsumeCnt = 0;
-                        }
-                    } else {
-                        m_mf_zeroConsumeCnt = 0;
+                        // no more progress possible in this call
+                        break;
                     }
-                    // Tell core loop "need more data" using existing FLAC continue codepath
-                    res = FLAC_DECODE_FRAMES_LOOP;
-                    break;
-                } else if(mf_res == micro_flac::FLAC_DECODER_END_OF_STREAM){
-                    m_f_eof = true;
-                    m_sbyt.bytesLeft = len - bytes_consumed;
-                    bytesDecoded = bytes_consumed;
-                    res = 0;
-                    break;
-                } else {
-                    AUDIO_ERROR("microflac decode error %d", (int)mf_res);
-                    m_sbyt.bytesLeft = len - bytes_consumed;
-                    bytesDecoded = bytes_consumed ? bytes_consumed : 1;
-                    // If header not ready -> fatal for this stream state. Reset and stop cleanly.
+
+                    if(mf_res == micro_flac::FLAC_DECODER_END_OF_STREAM){
+                        m_f_eof = true;
+                        break;
+                    }
+
+                    // errors
+                    AUDIO_ERROR("microflac decode error %d consumed=%u header=%u",
+                                (int)mf_res, (unsigned)bytes_consumed, (unsigned)m_mf_header_ready);
                     if(!m_mf_header_ready){
+                        // fatal before header ready -> stop cleanly via decodeError(-100)
                         AUDIO_ERROR("microflac fatal before header ready -> stop");
                         microflac_reset_();
                         m_mf_active = true; // keep micro-flac mode for next connect
-                        res = -100; // serious error -> decodeError() will stopSong()
+                        fatal_before_header = true;
+                        break;
                     } else {
-                        // after HEADER_READY micro-flac can often recover if we advance input
-                        res = -1;
+                        // after header: skip 1 byte to resync rather than reconnect immediately
+                        if(left > 0){ p += 1; left -= 1; total_consumed += 1; }
+                        continue;
                     }
-                    break;
+                }
+
+                // set leftovers for common epilogue (common code does bytesDecoded = len - bytesLeft)
+                m_sbyt.bytesLeft = len - total_consumed;
+
+                // If we can't reach HEADER_READY for too long -> reconnect (avoid infinite silence)
+                if(!m_mf_header_ready && m_mf_waitHeaderSinceMs &&
+                   (millis() - m_mf_waitHeaderSinceMs) > 6000 &&
+                   InBuff.bufferFilled() > 60000){
+                    AUDIO_ERROR("microflac: HEADER_READY timeout -> reconnect");
+                    stallReconnect("mf_header_timeout");
+                    return 0; // CRITICAL: never continue after reconnect
+                }
+
+                // ZERO-CONSUME reconnect policy: time-based, with grace window after HEADER_READY.
+                // NEVER reconnect solely because zero_consume hit the counter quickly after header.
+                {
+                    bool grace = m_mf_header_ready && m_mf_headerReadyAtMs &&
+                                 (millis() - m_mf_headerReadyAtMs) < MF_WEB_GRACE_AFTER_HEADER_MS;
+
+                    bool timed_stall = m_mf_lastProgressMs &&
+                                       (millis() - m_mf_lastProgressMs) > MF_WEB_STALL_MS &&
+                                       InBuff.bufferFilled() > 60000;
+
+                    if(!grace && timed_stall && m_mf_zeroConsumeCnt >= MF_WEB_ZERO_CONSUME_LIMIT){
+                        AUDIO_ERROR("microflac hard stall -> reconnect");
+                        stallReconnect("mf_hard_stall");
+                        return 0; // CRITICAL: never continue after reconnect
+                    }
+                }
+
+                // Decide res:
+                if(fatal_before_header){
+                    res = -100; // serious error -> decodeError() will stopSong()
+                } else if(m_f_eof){
+                    res = 0;
+                } else if(m_mf_pending_total > m_mf_pending_off){
+                    res = 0; // have PCM
+                } else {
+                    res = FLAC_DECODE_FRAMES_LOOP; // need more / no pcm yet
                 }
             } else {
                 // SD FLAC stays on old decoder
