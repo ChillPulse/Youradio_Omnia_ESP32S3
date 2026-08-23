@@ -761,6 +761,7 @@ private:
     uint16_t        m_mf_webBlock = 0; // current maxBlockSize set for WEB micro-flac
     uint32_t        m_mf_headerReadyAtMs = 0; // millis() when HEADER_READY was reached (grace window)
     uint32_t        m_mf_lastProgressMs = 0; // last time bytes_consumed>0 or SUCCESS
+    int8_t          m_mf_lastRes = 0; // diag: last micro-flac decode result
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;

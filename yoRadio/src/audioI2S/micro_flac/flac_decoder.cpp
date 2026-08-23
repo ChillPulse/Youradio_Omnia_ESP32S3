@@ -496,70 +496,104 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
     // (via demuxer consumption) or returns NEED_MORE_DATA when bytes_consumed >= input_len.
     // Malformed files with many tiny Ogg pages may cause many iterations per call, but
     // the count is proportional to input size.
+    // INVARIANT (Log58 root-fix): NEVER return NEED_MORE_DATA with bytes_consumed==0 while
+    // input_len>0 after HEADER/AUDIO phase, except when input is truly insufficient for one
+    // demux step AND the demuxer made no legal progress opportunity.
+    // Prefer bytes_consumed>=1 anti-stuck over outer zero-consume storm.
     const uint32_t t0 = mf_millis();
+    uint32_t idle_iters = 0;
     while (true) {
         size_t remaining = input_len - bytes_consumed;
-        if((mf_millis() - t0) > 40){  // FLAC frames can exceed 12ms on ESP32-S3
-            // Only yield if we already made input progress OR no input left to chew.
-            // Returning with 0 consume while input remains causes outer "zero-consume stall".
-            if(bytes_consumed > 0 || remaining == 0){
-                return FLAC_DECODER_NEED_MORE_DATA;
-            }
-            // else: allow a bit more time this call
-            if((mf_millis() - t0) > 80){
-                return FLAC_DECODER_NEED_MORE_DATA;
-            }
-        }
         auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
-        // "No progress" is only a problem if we also have no packet to process.
-        // micro_ogg may legally return OGG_OK with packet ready and bytes_consumed==0 (from internal buffer).
-        if(state.bytes_consumed == 0 &&
-           state.result == micro_ogg::OGG_OK &&
-           state.packet.length == 0) {
-            return FLAC_DECODER_NEED_MORE_DATA;
+
+        // A) input progress bookkeeping
+        if (state.bytes_consumed > 0) {
+            bytes_consumed += state.bytes_consumed;
+            idle_iters = 0;
+        } else {
+            idle_iters++;
         }
 
-        // If packet was skipped but no bytes were consumed, don't spin.
-        if(state.bytes_consumed == 0 && state.result == micro_ogg::OGG_PACKET_SKIPPED){
-            return FLAC_DECODER_NEED_MORE_DATA;
-        }
-        bytes_consumed += state.bytes_consumed;
-
+        // B) OGG_NEED_MORE_DATA
         if (state.result == micro_ogg::OGG_NEED_MORE_DATA) {
             if (this->ogg_eos_seen_) {
                 return FLAC_DECODER_END_OF_STREAM;
             }
-            if (bytes_consumed < input_len) {
-                continue;  // More input available; e.g., next page header after page finalization
+            // If input remains but the demuxer does not eat it, this is NOT "need more".
+            // Spinning until budget and returning consumed=0 caused the outer
+            // zero-consume storm (Log58).
+            if (state.bytes_consumed == 0 && remaining > 0) {
+                // Soft-resync once: find next "OggS" in remaining input
+                const uint8_t* p = input + bytes_consumed;
+                size_t r = remaining;
+                size_t k = 1; // skip at least 1 byte to avoid infinite same pos
+                for (; k + 3 < r; k++) {
+                    if (p[k] == 'O' && p[k+1] == 'g' && p[k+2] == 'g' && p[k+3] == 'S') break;
+                }
+                if (k + 3 < r) {
+                    this->ogg_demuxer_->reset();
+                    bytes_consumed += k;
+                    idle_iters = 0;
+                    continue;
+                }
+                // No OggS in this chunk - "eat 0" is forbidden: return NEED_MORE only if
+                // progress already happened in this call; otherwise eat 1 byte so the
+                // outer layer advances the window (anti-stuck).
+                if (bytes_consumed == 0) {
+                    bytes_consumed = 1; // CRITICAL anti-zero-consume
+                }
+                return FLAC_DECODER_NEED_MORE_DATA;
             }
+            // Normal need-more: either progress was made or input is exhausted
             return FLAC_DECODER_NEED_MORE_DATA;
         }
 
-        if (state.result == micro_ogg::OGG_PACKET_SKIPPED) {
-            // packet too large / skipped -> just continue scanning
-            continue;
+        // C) empty OK / SKIPPED without consume - don't spin
+        if (state.bytes_consumed == 0 &&
+            state.result == micro_ogg::OGG_OK && state.packet.length == 0) {
+            if (bytes_consumed == 0 && remaining > 0) bytes_consumed = 1;
+            return FLAC_DECODER_NEED_MORE_DATA;
+        }
+        if (state.bytes_consumed == 0 && state.result == micro_ogg::OGG_PACKET_SKIPPED) {
+            if (bytes_consumed == 0 && remaining > 0) bytes_consumed = 1;
+            return FLAC_DECODER_NEED_MORE_DATA;
         }
 
+        // D) time budget - yield ONLY when progress exists OR input exhausted
+        //    (idle_iters is an extra spin guard against pathological demuxer loops)
+        if ((mf_millis() - t0) > 40 || idle_iters > 64) {
+            if (bytes_consumed > 0 || remaining == 0) {
+                return FLAC_DECODER_NEED_MORE_DATA;
+            }
+            // no progress + input remains: allow a bit more time, then anti-stuck
+            if ((mf_millis() - t0) > 80 || idle_iters > 128) {
+                if (bytes_consumed == 0 && remaining > 0) bytes_consumed = 1;
+                return FLAC_DECODER_NEED_MORE_DATA;
+            }
+        }
+
+        // E) errors: radio-tolerant resync (keep Rec53h idea), but ALWAYS move forward
         if (state.result < 0) {
-            // Radio streams may chain/restart; try to resync
             this->ogg_demuxer_->reset();
-            // Try to find next "OggS" inside remaining input to resync quickly
             if (bytes_consumed < input_len) {
                 const uint8_t* p = input + bytes_consumed;
                 size_t r = input_len - bytes_consumed;
-                // naive search for 'O''g''g''S'
                 size_t k = 0;
                 for (; k + 3 < r; k++) {
                     if (p[k] == 'O' && p[k+1] == 'g' && p[k+2] == 'g' && p[k+3] == 'S') break;
                 }
                 if (k + 3 < r) {
-                    bytes_consumed += k; // jump to next page
+                    bytes_consumed += (k == 0 ? 1 : k); // always move
                     continue;
                 }
             }
+            if (bytes_consumed == 0 && input_len > 0) bytes_consumed = 1;
             return FLAC_DECODER_NEED_MORE_DATA;
         }
 
+        if (state.result == micro_ogg::OGG_PACKET_SKIPPED) {
+            continue; // bytes already accounted in A)
+        }
         if (state.result != micro_ogg::OGG_OK) {
             return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
         }
