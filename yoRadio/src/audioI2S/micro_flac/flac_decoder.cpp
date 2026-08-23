@@ -30,6 +30,17 @@
 // never produce a NEED_MORE_DATA with bytes_consumed==0 while input remains.
 #if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
 #include <esp_timer.h>
+#include <esp_heap_caps.h>
+// OMNIA-PATCH Log60 (2.5): PSRAM allocators for the radio Ogg demuxer buffers
+static void* ogg_psram_alloc(size_t s) {
+    return heap_caps_malloc(s, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+static void* ogg_psram_realloc(void* p, size_t s) {
+    return heap_caps_realloc(p, s, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+static void ogg_psram_free(void* p) {
+    heap_caps_free(p);
+}
 #endif
 static inline uint32_t mf_millis() {
 #if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
@@ -259,8 +270,19 @@ FLACDecoderResult FLACDecoder::decode_impl(const uint8_t* input, size_t input_le
             this->detect_buffer_[2] == 'g' && this->detect_buffer_[3] == 'S') {
 #ifndef MICRO_FLAC_DISABLE_OGG
             this->container_type_ = ContainerType::OGG_FLAC;
-            // Streaming mode: only a 282-byte header staging buffer is needed
-            this->ogg_demuxer_ = std::make_unique<micro_ogg::OggDemuxer>();
+            // OMNIA-PATCH Log60 (2.5): large PSRAM demux buffers for radio Ogg-FLAC.
+            // The upstream default (tiny staging only) is not enough for continuous
+            // radio streams with big pages/packets.
+            micro_ogg::OggDemuxerConfig cfg;
+            cfg.min_buffer_size = 16384;
+            cfg.max_buffer_size = 1024 * 1024; // 1MB PSRAM
+            cfg.enable_crc = false;
+#if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
+            cfg.alloc = ogg_psram_alloc;
+            cfg.realloc = ogg_psram_realloc;
+            cfg.free = ogg_psram_free;
+#endif
+            this->ogg_demuxer_ = std::make_unique<micro_ogg::OggDemuxer>(cfg);
 #else
             return this->set_fatal_error(FLAC_DECODER_ERROR_INPUT_INVALID);
 #endif
@@ -591,8 +613,16 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
                 this->reset_frame_state();
                 continue;  // demuxer already advanced past this packet
             } else if (result < 0) {
-                // surface the REAL frame error as a soft error (no fatal latch in AUDIO phase)
                 this->reset_frame_state();
+                // OMNIA-PATCH Log60 (3.5): soft frame errors (SYNC/short page/CRC) must not
+                // surface to the caller on every packet - skip to the NEXT packet instead
+                if (result == FLAC_DECODER_ERROR_SYNC_NOT_FOUND ||
+                    result == FLAC_DECODER_ERROR_BAD_HEADER ||
+                    result == FLAC_DECODER_ERROR_CRC_MISMATCH) {
+                    if (bytes_consumed < input_len) continue;
+                    return FLAC_DECODER_NEED_MORE_DATA;  // soft: let caller feed more
+                }
+                // surface the REAL hard frame error as a soft error (no fatal latch in AUDIO phase)
                 return result;
             } else {
                 this->reset_frame_state();
@@ -611,6 +641,17 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         }
         if (result == FLAC_DECODER_END_OF_STREAM) {
             return FLAC_DECODER_END_OF_STREAM;
+        }
+        // OMNIA-PATCH Log60 (3.5): SYNC_NOT_FOUND / soft frame errors in AUDIO phase:
+        // the packet is already consumed by the demuxer -> reset frame state and go on
+        // with the NEXT packet instead of returning -2 on every short/non-audio page.
+        if (this->decode_phase_ == DecodePhase::AUDIO &&
+            (result == FLAC_DECODER_ERROR_SYNC_NOT_FOUND ||
+             result == FLAC_DECODER_ERROR_BAD_HEADER ||
+             result == FLAC_DECODER_ERROR_CRC_MISMATCH)) {
+            this->reset_frame_state();
+            if (bytes_consumed < input_len) continue;
+            return FLAC_DECODER_NEED_MORE_DATA;  // soft: let caller feed more
         }
         return result;  // error
     }

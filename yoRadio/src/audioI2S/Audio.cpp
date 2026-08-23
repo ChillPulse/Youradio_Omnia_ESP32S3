@@ -35,14 +35,15 @@ constexpr size_t    m_frameSizeMP3       = 1600 * 2;
 constexpr size_t    m_frameSizeAAC       = 1600;
 constexpr size_t    m_frameSizeFLAC      = UINT16_MAX; // Ogg-FLAC metadata/pages may be large, 65535 max ogg size (was 4096*6=24576)
 // --- Omnia flagship: micro-flac WEB tuning ---
-constexpr uint16_t  MF_WEB_BLOCK_DEFAULT = 65535; // desired block for Ogg-FLAC radio; clamped to InBuff residual at activation
-constexpr uint16_t  MF_WEB_BLOCK_MAX = UINT16_MAX; // emergency for very large Ogg pages
-constexpr uint16_t  MF_WEB_MIN_DECODE = 4096; // can start decode earlier than maxBlockSize
-constexpr uint8_t   MF_WEB_ZERO_CONSUME_LIMIT = 80; // how many cycles bytes_consumed==0 allowed before reconnect
-constexpr uint32_t  MF_WEB_GRACE_AFTER_HEADER_MS = 4000; // after HEADER_READY: 4s no reconnect due to zero-consume
-constexpr uint32_t  MF_WEB_STALL_MS = 6000;              // generic time-based stall threshold
-constexpr int       MF_WEB_MAX_LOOPS = 8;                // local decode iterations per sendBytes
-constexpr uint16_t  MF_WEB_ERR_SOFT_LIMIT = 30;          // soft errors after header (per 10s window) before reconnect
+constexpr uint16_t  MF_WEB_BLOCK_DEFAULT = 32768; // honest default (Log60 5.2): min(65535, residual); streaming demuxer feeds fine in 32K windows
+constexpr uint16_t  MF_WEB_BLOCK_MAX = 65535;     // emergency for very large Ogg pages
+constexpr uint16_t  MF_WEB_MIN_DECODE = 4096;     // can start decode earlier than maxBlockSize
+constexpr uint8_t   MF_WEB_MAX_LOOPS = 8;         // decode() loops per sendBytes
+constexpr uint32_t  MF_WEB_GRACE_AFTER_HEADER_MS = 4000; // after HEADER_READY: no reconnect due to zero-consume
+constexpr uint32_t  MF_WEB_STALL_MS = 8000;              // generic time-based stall threshold
+constexpr uint8_t   MF_WEB_ZERO_CONSUME_LIMIT = 80;      // cycles with bytes_consumed==0 before reconnect
+constexpr uint8_t   MF_WEB_ERR_SOFT_LIMIT = 24;          // soft errors per window before reconnect (not 31/1s!)
+constexpr uint32_t  MF_WEB_SOFT_WINDOW_MS = 10000;       // soft-error counting window
 
 // Log59: humanize micro-flac error codes for diagnostics
 static const char* mfErrName(int e){
@@ -4073,9 +4074,10 @@ exit:
     }
 }
 bool Audio::stallReconnect(const char* reason){
+    // ---- Log60 (5.11) safe reconnect: no UAF / no Guru Meditation on close ----
     if(!m_lastHost.valid()) return false;
-    // throttle: не чаще 1 раза в 600ms (Rec42, was 800)
-    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 600) return false;
+    // throttle: not more often than once per 1000ms (Log60: was 600)
+    if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 1000) return false;
     m_lastStallReconnectMs = millis();
     // FLAC-specific fail-fast: if FLAC stalls twice within 30s, stop instead of endless reconnects
     // But for micro-flac WEB, allow recovery - do not fail-fast aggressively
@@ -4098,17 +4100,27 @@ bool Audio::stallReconnect(const char* reason){
     }
     m_stallReconnectTries++;
     AUDIO_ERROR("Decode stalled -> reconnect #%u (%s)", (unsigned)m_stallReconnectTries, reason);
-    // после 3 попыток — сдаёмся (иначе бесконечная карусель)
+    // give up after 3 tries (otherwise endless carousel)
     if(m_stallReconnectTries > 3){
         AUDIO_ERROR("Decode stalled: giving up");
         stopSong();
         return true;
     }
-    // сохранить URL ДО stopSong(), т.к. stopSong()/setDefaults() могут очистить m_lastHost
+    // 1) COPY URL FIRST - stopSong()/setDefaults() may clear m_lastHost (UAF otherwise)
     ps_ptr<char> url(__LINE__);
     url.assign(m_lastHost.get());
-    stopSong(); // корректно закрывает client/clientsecure и сбрасывает состояния
-    InBuff.resetBuffer(); // на всякий случай
+    if(!url.valid()) return false;
+    // 2) freeze micro-flac decode path BEFORE any free (drains/sendBytes check this flag)
+    m_mf_reconnecting = true;
+    // 3) serialize against user API (connecttohost/connecttoFS) with a timeout;
+    //    proceed even on timeout - stopSong() itself waits for the decode step to end
+    bool haveMutex = (xSemaphoreTakeRecursive(mutex_playAudioData, 0.3 * configTICK_RATE_HZ) == pdTRUE);
+    stopSong();               // closes the active client safely (null-checked inside)
+    InBuff.resetBuffer();     // discard stale bitstream (demuxer restarts from scratch)
+    microflac_reset_();       // free pending/out32 under the frozen decode path
+    if(haveMutex) xSemaphoreGiveRecursive(mutex_playAudioData);
+    m_mf_reconnecting = false;
+    // 4) reconnect only now, with the local URL copy; caller MUST return 0 right after
     return connecttohost(url.get());
 }
 void Audio::microflac_reset_(){
@@ -4698,7 +4710,8 @@ void Audio::playAudioData() {
     if(m_validSamples) {playChunk();                                                   return;} // guard, play samples first
 
     // micro-flac: if we have pending decoded PCM, output next chunk without consuming new input bytes
-    if(m_codec == CODEC_FLAC && m_mf_active && m_mf_pending_off < m_mf_pending_total){
+    if(m_codec == CODEC_FLAC && m_mf_active && m_mf_out32 && !m_mf_reconnecting &&
+       m_mf_pending_off < m_mf_pending_total){
         const size_t remain = m_mf_pending_total - m_mf_pending_off;
         const size_t chunk = (remain > m_outbuffSize) ? m_outbuffSize : remain;
         int bps = m_mf_bits ? (int)m_mf_bits : 16;
@@ -4834,7 +4847,7 @@ void Audio::playAudioData() {
 exit:
     // micro-flac: drain freshly decoded pending PCM immediately after sendBytes
     // (avoids "SUCCESS happened but PCM only leaves on next tick")
-    if(m_codec == CODEC_FLAC && m_mf_active && m_validSamples == 0 &&
+    if(m_codec == CODEC_FLAC && m_mf_active && m_validSamples == 0 && !m_mf_reconnecting &&
        m_mf_pending_off < m_mf_pending_total && m_mf_out32){
         const size_t remain = m_mf_pending_total - m_mf_pending_off;
         const size_t chunk = (remain > m_outbuffSize) ? m_outbuffSize : remain;
@@ -5831,6 +5844,8 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
         case CODEC_FLAC: {
             bool isWeb = (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE);
             if(isWeb){
+                // Log60 (5.11): decode path frozen during a scheduled reconnect - no touching g_mf/out32
+                if(m_mf_reconnecting){ m_sbyt.bytesLeft = len; res = FLAC_DECODE_FRAMES_LOOP; break; }
                 // WEB FLAC -> micro-flac backend (radio only)
                 if(!m_mf_active){
                     microflac_reset_();
@@ -5881,6 +5896,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                 bool fatal_before_header = false;
 
                 while(loops++ < MF_WEB_MAX_LOOPS && left > 0){
+                    if(m_mf_pending_total > m_mf_pending_off) break; // drain pending PCM first (Log60 5.5)
                     size_t bytes_consumed = 0;
                     size_t samples_decoded = 0;
                     // out/out_cap re-evaluated EVERY iteration (out32 appears after HEADER_READY)
@@ -6026,10 +6042,19 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                         break;
                     }
 
-                    // ============ ERROR PATH (mf_res < 0) - Log59 rewrite ============
-                    AUDIO_ERROR("microflac err %d (%s) cons=%u left=%u header=%u out=%u",
-                                (int)mf_res, mfErrName((int)mf_res), (unsigned)bytes_consumed,
-                                (unsigned)left, (unsigned)m_mf_header_ready, (unsigned)(m_mf_out32 != nullptr));
+                    // ============ ERROR PATH (mf_res < 0) - Log60 rewrite ============
+                    {   // rate-limit error logs to ~5/s (Log60 5.9: don't flood CLI/WS)
+                        static uint32_t s_errLogWinMs = 0;
+                        static uint8_t  s_errLogCnt = 0;
+                        uint32_t nowMs = millis();
+                        if(nowMs - s_errLogWinMs > 1000){ s_errLogWinMs = nowMs; s_errLogCnt = 0; }
+                        if(s_errLogCnt < 5){
+                            s_errLogCnt++;
+                            AUDIO_ERROR("microflac err %d (%s) cons=%u left=%u header=%u out=%u",
+                                        (int)mf_res, mfErrName((int)mf_res), (unsigned)bytes_consumed,
+                                        (unsigned)left, (unsigned)m_mf_header_ready, (unsigned)(m_mf_out32 != nullptr));
+                        }
+                    }
 
                     if(!m_mf_header_ready){
                         if(m_mf_headerReadyAtMs){
@@ -6066,7 +6091,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     }
 
                     // soft-error accounting (10s window)
-                    if(m_mf_errWindowMs == 0 || (millis() - m_mf_errWindowMs) > 10000){
+                    if(m_mf_errWindowMs == 0 || (millis() - m_mf_errWindowMs) > MF_WEB_SOFT_WINDOW_MS){
                         m_mf_errWindowMs = millis();
                         m_mf_errSoftCnt = 0;
                     }
@@ -6106,11 +6131,13 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     m_mf_prevErr = (int8_t)mf_res;
 
                     // soft error: if the decoder consumed input, the advance already happened;
-                    // otherwise skip to the next OggS (>= 1 byte) so we never re-parse the same bytes
+                    // otherwise skip to the next OggS OR FLAC frame sync (0xFF 0xF8..0xFB),
+                    // >= 1 byte, so we never re-parse the same bytes (Log60 5.9)
                     if(bytes_consumed == 0 && left > 0){
                         size_t k = 1;
                         for(; k + 3 < left; k++){
                             if(p[k]=='O' && p[k+1]=='g' && p[k+2]=='g' && p[k+3]=='S') break;
+                            if(p[k]==0xFF && (p[k+1] & 0xFC) == 0xF8) break; // FLAC frame sync
                         }
                         if(k + 3 >= left) k = 1;
                         p += k; left -= k; total_consumed += k;

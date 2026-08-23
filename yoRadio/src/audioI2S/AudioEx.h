@@ -768,6 +768,7 @@ private:
     uint16_t        m_mf_errSoftCnt = 0; // soft errors after header within current 10s window
     uint32_t        m_mf_errWindowMs = 0; // start of the soft-error counting window
     bool            m_mf_streamLogged = false; // one-shot "microflac stream:" log after header
+    volatile bool   m_mf_reconnecting = false; // Log60 (5.11): decode path frozen while a reconnect is scheduled
     uint32_t        m_audioFileDuration = 0;        // seconds
     uint32_t        m_audioCurrentTime = 0;         // seconds
     float           m_resampleError = 0.0f;
