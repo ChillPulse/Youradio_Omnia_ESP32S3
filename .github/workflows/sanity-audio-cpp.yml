@@ -1,0 +1,16 @@
+name: sanity-audio-cpp
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python sanity check for Audio.cpp
+        run: |
+          python3 tools/omnia_sanity_audio_cpp.py

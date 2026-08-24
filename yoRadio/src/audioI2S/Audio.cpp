@@ -8523,17 +8523,11 @@ bool Audio::omnia_aacSeekMs(uint32_t ms){
     }
   }
 
-  // Fallback proportional if no index
+  // Fallback: proportional seek when index is missing
   uint32_t offset = (m_aacDurMs) ? (uint64_t)ms * audioSize / m_aacDurMs : 0;
   uint32_t pos = audioStart + offset;
   if(pos >= endPos) pos = endPos - 1;
   AUDIO_INFO("aacSeekMs fallback proportional ms=%lu -> pos %lu", (unsigned long)ms, (unsigned long)pos);
   return setFilePos(pos);
 }
-ack proportional if no index
-  uint32_t offset = (m_aacDurMs) ? (uint64_t)ms * audioSize / m_aacDurMs : 0;
-  uint32_t pos = audioStart + offset;
-  if(pos >= endPos) pos = endPos - 1;
-  AUDIO_INFO("aacSeekMs fallback proportional ms=%lu -> pos %lu", (unsigned long)ms, (unsigned long)pos);
-  return setFilePos(pos);
-}
+// === AUDIO.CPP EOF (DO NOT ADD CODE BELOW) ===
