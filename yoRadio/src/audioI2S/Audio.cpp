@@ -35,8 +35,9 @@ constexpr size_t    m_frameSizeMP3       = 1600 * 2;
 constexpr size_t    m_frameSizeAAC       = 1600;
 constexpr size_t    m_frameSizeFLAC      = UINT16_MAX; // Ogg-FLAC metadata/pages may be large, 65535 max ogg size (was 4096*6=24576)
 // --- Omnia flagship: micro-flac WEB tuning ---
-constexpr uint16_t  MF_WEB_BLOCK_DEFAULT = 32768; // honest default (Log60 5.2): min(65535, residual); streaming demuxer feeds fine in 32K windows
-constexpr uint16_t  MF_WEB_BLOCK_MAX = 65535;     // emergency for very large Ogg pages
+// Log63: HEADER_READY есть, но нет SUCCESS при block=32768 → кормим micro-flac всем доступным residual окном
+constexpr uint16_t  MF_WEB_BLOCK_DEFAULT = 65535; // <= InBuff residual (AudioBuffer m_resBuffSize = UINT16_MAX)
+constexpr uint16_t  MF_WEB_BLOCK_MAX = 65535;
 constexpr uint16_t  MF_WEB_MIN_DECODE = 4096;     // can start decode earlier than maxBlockSize
 constexpr uint8_t   MF_WEB_MAX_LOOPS = 8;         // decode() loops per sendBytes
 constexpr uint32_t  MF_WEB_GRACE_AFTER_HEADER_MS = 4000; // after HEADER_READY: no reconnect due to zero-consume
@@ -5864,13 +5865,21 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
         m_sbyt.channels = 2; // assume aac stereo
         m_sbyt.isPS = 0;
         m_sbyt.f_setDecodeParamsOnce = true;
-        m_sbyt.nextSync = findNextSync(data, len);
-        if(m_sbyt.nextSync <  0) return len; // no syncword found
-        if(m_sbyt.nextSync == 0) { m_f_playing = true; }
-        if(m_sbyt.nextSync >  0) {
-            // Do not treat initial OGG lock-on as "stall" (Rec46 A)
-            if(m_lastGoodDecodeMs) m_resyncSkipCnt++;
-            return m_sbyt.nextSync;
+        // OMNIA-PATCH Log63: WEB-FLAC (micro-flac) не должен проходить через legacy syncword scan.
+        // micro-flac сам детектит "OggS"/"fLaC"; legacy findNextSync может выкинуть fLaC metadata.
+        if (m_codec == CODEC_FLAC && (m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE)) {
+            m_sbyt.nextSync = 0;
+            m_f_playing = true;
+            m_f_decode_ready = true;
+            // не возвращаем; продолжаем в micro-flac decode path
+        } else {
+            m_sbyt.nextSync = findNextSync(data, len);
+            if(m_sbyt.nextSync <  0) return len;
+            if(m_sbyt.nextSync == 0) { m_f_playing = true; }
+            if(m_sbyt.nextSync >  0) {
+                if(m_lastGoodDecodeMs) m_resyncSkipCnt++;
+                return m_sbyt.nextSync;
+            }
         }
     }
     // m_f_playing is true at this pos
@@ -6076,6 +6085,17 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                                            (unsigned)left,
                                            (unsigned)(m_mf_out32 != nullptr),
                                            (int)m_mf_lastRes);
+                            }
+                        }
+                        // OMNIA-PATCH Log63: NEED_MORE может быть с прогрессом (bytes_consumed>0), но без PCM.
+                        // Логируем редко, чтобы видеть что декодер реально движется.
+                        if(bytes_consumed > 0 && samples_decoded == 0){
+                            static uint32_t s_needMoreProgMs = 0;
+                            if(millis() - s_needMoreProgMs > 700){
+                                s_needMoreProgMs = millis();
+                                AUDIO_INFO("microflac NEED_MORE(progress) cons=%u total_cons=%u left=%u filled=%u header=%u",
+                                           (unsigned)bytes_consumed, (unsigned)total_consumed, (unsigned)left,
+                                           (unsigned)InBuff.bufferFilled(), (unsigned)m_mf_header_ready);
                             }
                         }
                         // no more progress possible in this call
