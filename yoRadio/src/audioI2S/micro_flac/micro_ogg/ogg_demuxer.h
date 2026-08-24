@@ -240,6 +240,11 @@ public:
      */
     void reset();
 
+    // Diagnostics: last demux result and last parsed page header
+    OggDemuxResult get_last_result() const { return last_result_; }
+    bool has_last_header() const { return last_header_valid_; }
+    OggPageHeader get_last_header() const { return last_header_; }
+
     /**
      * @brief Get the current page's continued packet flag state
      *
@@ -466,6 +471,10 @@ private:
     bool current_packet_is_bos_{false};
     bool bos_flag_used_{false};  // BOS flag only applies to first packet
     bool enable_crc_{false};     // Enable/disable CRC validation
+
+    OggDemuxResult last_result_ = OGG_OK;
+    OggPageHeader  last_header_{};
+    bool           last_header_valid_ = false;
 
 #ifdef MICRO_OGG_DEMUXER_DEBUG
     // Statistics (only enabled with MICRO_OGG_DEMUXER_DEBUG)

@@ -4105,6 +4105,7 @@ exit:
 }
 bool Audio::stallReconnect(const char* reason){
     // ---- Log60 (5.11) safe reconnect: no UAF / no Guru Meditation on close ----
+    if (m_mf_reconnecting) return false;
     if(!m_lastHost.valid()) return false;
     // throttle: not more often than once per 1000ms (Log60: was 600)
     if(m_lastStallReconnectMs && (millis() - m_lastStallReconnectMs) < 1000) return false;
@@ -8472,6 +8473,43 @@ bool Audio::omnia_aacSeekMs(uint32_t ms){
       uint32_t start = m_audioDataStart;
       uint32_t endPos = start + (m_audioDataSize ? m_audioDataSize : m_audioFileSize);
       uint32_t basePos = m_aacSecOff[sec]; // ABS per Chat20
+      if(basePos < start) basePos = start;
+      if(basePos >= endPos) basePos = endPos - 1;
+      File *f = m_aacIdxFileSeek ? &m_aacIdxFileSeek : (m_aacIdxFileBuild ? &m_aacIdxFileBuild : nullptr);
+      uint32_t curPos = basePos;
+      if(f) f->seek(curPos, SeekSet);
+      else { if(audioFileSeek(curPos)!=0) return false; }
+      uint64_t targetSamples = (uint64_t)ms * m_aacSampleRate / 1000ULL;
+      uint64_t curSamples = (uint64_t)sec * m_aacSampleRate;
+      uint8_t hdr[10];
+      while(curSamples < targetSamples){
+        int rd = f ? f->read(hdr,7) : audioFileRead(hdr,7);
+        if(rd!=7) break;
+        uint32_t fl, sr, smp;
+        if(!adtsParseHeader(hdr, fl, sr, smp)) break;
+        curSamples += smp;
+        curPos += fl;
+        if(f){
+          if(fl>7) f->seek(curPos, SeekSet);
+        } else {
+          if(fl>7) audioFileSeek(curPos);
+        }
+        if(curSamples >= targetSamples) break;
+      }
+      if(curPos >= endPos) curPos = endPos - 1;
+      AUDIO_INFO("aacSeekMs FAST sec=%lu basePos=%lu curPos=%lu targetMs=%lu", (unsigned long)sec, (unsigned long)basePos, (unsigned long)curPos, (unsigned long)ms);
+      return setFilePos(curPos);
+    }
+  }
+
+  // Fallback proportional if no index
+  uint32_t offset = (m_aacDurMs) ? (uint64_t)ms * audioSize / m_aacDurMs : 0;
+  uint32_t pos = audioStart + offset;
+  if(pos >= endPos) pos = endPos - 1;
+  AUDIO_INFO("aacSeekMs fallback proportional ms=%lu -> pos %lu", (unsigned long)ms, (unsigned long)pos);
+  return setFilePos(pos);
+}
+ Chat20
       if(basePos < start) basePos = start;
       if(basePos >= endPos) basePos = endPos - 1;
       File *f = m_aacIdxFileSeek ? &m_aacIdxFileSeek : (m_aacIdxFileBuild ? &m_aacIdxFileBuild : nullptr);

@@ -402,6 +402,12 @@ public:
         return this->enable_crc_check_;
     }
 
+    int8_t   get_last_ogg_result() const { return last_ogg_result_; }
+    uint32_t get_last_ogg_serial() const { return last_ogg_serial_; }
+    uint32_t get_last_ogg_sequence() const { return last_ogg_sequence_; }
+    uint8_t  get_last_ogg_header_type() const { return last_ogg_header_type_; }
+    uint8_t  get_last_ogg_segment_count() const { return last_ogg_segment_count_; }
+
 private:
     // ========================================
     // Private Types
@@ -677,6 +683,11 @@ private:
     uint8_t ogg_bos_prefix_consumed_{0};  // 0-9 tracks BOS prefix validation progress
     bool ogg_bos_processed_{false};
     bool ogg_eos_seen_{false};  // EOS flag from demuxer
+    int8_t   last_ogg_result_ = 0;
+    uint32_t last_ogg_serial_ = 0;
+    uint32_t last_ogg_sequence_ = 0;
+    uint8_t  last_ogg_header_type_ = 0;
+    uint8_t  last_ogg_segment_count_ = 0;
 #endif
 
     // Metadata storage

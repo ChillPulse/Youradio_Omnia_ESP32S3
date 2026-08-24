@@ -496,6 +496,14 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         }
 
         auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
+        this->last_ogg_result_ = (int8_t)state.result;
+        if (this->ogg_demuxer_->has_last_header()) {
+            auto h = this->ogg_demuxer_->get_last_header();
+            this->last_ogg_serial_ = h.stream_serial;
+            this->last_ogg_sequence_ = h.page_sequence;
+            this->last_ogg_header_type_ = h.header_type;
+            this->last_ogg_segment_count_ = h.segment_count;
+        }
         bytes_consumed += state.bytes_consumed;
 
         if (state.result == micro_ogg::OGG_NEED_MORE_DATA) {

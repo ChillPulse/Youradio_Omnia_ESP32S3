@@ -284,11 +284,13 @@ OggDemuxState OggDemuxer::get_next_data(const uint8_t* input, size_t input_len) 
         state.packet.is_eos = false;
         state.packet.is_last_on_page = false;
         state.packet.granule_position = OGG_INVALID_GRANULE_POSITION;
+        this->last_result_ = state.result;
         return state;
     }
 
     // Reject interleaving with get_next_packet() unless at a packet boundary
     if (!enforce_mode(ConsumptionMode::DATA, state)) {
+        this->last_result_ = state.result;
         return state;
     }
 
@@ -305,6 +307,7 @@ OggDemuxState OggDemuxer::get_next_data(const uint8_t* input, size_t input_len) 
     if (state_ == STATE_EXPECT_PAGE_HEADER || state_ == STATE_ACCUMULATING_PAGE_HEADER) {
         InternalResult result = handle_page_header(input, input_len, state, false);
         if (result != InternalResult::OK) {
+            this->last_result_ = state.result;
             return state;
         }
         // Header parsed, now in STATE_PROCESSING_SEGMENTS. Offer any input bytes
@@ -314,20 +317,24 @@ OggDemuxState OggDemuxer::get_next_data(const uint8_t* input, size_t input_len) 
 
         if (remaining_len == 0) {
             state.result = OGG_NEED_MORE_DATA;
+            this->last_result_ = state.result;
             return state;
         }
 
         offer_body_data(input + header_bytes, remaining_len, header_bytes, state);
+        this->last_result_ = state.result;
         return state;
     }
 
     // STATE_PROCESSING_SEGMENTS: offer body bytes as zero-copy pointer
     if (state_ == STATE_PROCESSING_SEGMENTS) {
         offer_body_data(input, input_len, 0, state);
+        this->last_result_ = state.result;
         return state;
     }
 
     state.result = OGG_NEED_MORE_DATA;
+    this->last_result_ = state.result;
     return state;
 }
 
@@ -462,6 +469,8 @@ OggDemuxResult OggDemuxer::parse_page_header(const uint8_t* data, size_t data_le
         return OGG_NEED_MORE_DATA;
     }
 
+    this->last_header_ = header;
+    this->last_header_valid_ = true;
     return OGG_OK;
 }
 
