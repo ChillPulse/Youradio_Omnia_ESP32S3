@@ -597,39 +597,11 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
                                           output_32bit);
         samples_decoded = native_samples;
 
-        // The demuxer assumes all offered data is consumed (it auto-advances).
-        // Each Ogg FLAC packet contains exactly one FLAC frame, so decode_native
-        // must consume all bytes: either streaming them in (NEED_MORE_DATA) or
-        // completing a frame (SUCCESS/HEADER_READY). A mismatch means data loss.
+        // --- BEGIN FIX (Log64): do NOT drop frame state on NEED_MORE in Ogg-FLAC ---
+        // micro-flac reference behavior (v0.2.0): NEED_MORE means "continue feeding", state must persist.
         if (native_consumed != body_len) {
-            // OMNIA-PATCH Log59 (3.2): radio-tolerant — a mismatch must not be an unconditional
-            // fatal -14 (it masked real frame errors and latched the decoder forever).
-            if (result == FLAC_DECODER_SUCCESS || result == FLAC_DECODER_HEADER_READY) {
-                // leftover tail in the ogg packet after a complete frame: ignore (padding),
-                // keep result, do NOT fatal
-            } else if (result == FLAC_DECODER_NEED_MORE_DATA) {
-                // a partial frame across packets must consume the whole body in Ogg-FLAC;
-                // mismatch on NEED_MORE means lost sync inside the packet -> drop this packet
-                this->reset_frame_state();
-                continue;  // demuxer already advanced past this packet
-            } else if (result < 0) {
-                this->reset_frame_state();
-                // OMNIA-PATCH Log60 (3.5): soft frame errors (SYNC/short page/CRC) must not
-                // surface to the caller on every packet - skip to the NEXT packet instead
-                if (result == FLAC_DECODER_ERROR_SYNC_NOT_FOUND ||
-                    result == FLAC_DECODER_ERROR_BAD_HEADER ||
-                    result == FLAC_DECODER_ERROR_CRC_MISMATCH) {
-                    if (bytes_consumed < input_len) continue;
-                    return FLAC_DECODER_NEED_MORE_DATA;  // soft: let caller feed more
-                }
-                // surface the REAL hard frame error as a soft error (no fatal latch in AUDIO phase)
-                return result;
-            } else {
-                this->reset_frame_state();
-                continue;
-            }
+            return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
         }
-
         if (result == FLAC_DECODER_NEED_MORE_DATA) {
             continue;
         }
@@ -642,18 +614,8 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         if (result == FLAC_DECODER_END_OF_STREAM) {
             return FLAC_DECODER_END_OF_STREAM;
         }
-        // OMNIA-PATCH Log60 (3.5): SYNC_NOT_FOUND / soft frame errors in AUDIO phase:
-        // the packet is already consumed by the demuxer -> reset frame state and go on
-        // with the NEXT packet instead of returning -2 on every short/non-audio page.
-        if (this->decode_phase_ == DecodePhase::AUDIO &&
-            (result == FLAC_DECODER_ERROR_SYNC_NOT_FOUND ||
-             result == FLAC_DECODER_ERROR_BAD_HEADER ||
-             result == FLAC_DECODER_ERROR_CRC_MISMATCH)) {
-            this->reset_frame_state();
-            if (bytes_consumed < input_len) continue;
-            return FLAC_DECODER_NEED_MORE_DATA;  // soft: let caller feed more
-        }
         return result;  // error
+        // --- END FIX ---
     }
 }
 #endif  // MICRO_FLAC_DISABLE_OGG
