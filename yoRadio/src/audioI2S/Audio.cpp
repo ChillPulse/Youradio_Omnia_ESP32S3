@@ -251,11 +251,25 @@ void AudioBuffer::bytesWasRead(size_t br) {
 uint8_t* AudioBuffer::getWritePtr() { return m_writePtr; }
 
 uint8_t* AudioBuffer::getReadPtr() {
-    int32_t len = m_endPtr - m_readPtr;
-    if(len < m_maxBlockSize) {                            // be sure the last frame is completed
-        size_t copy = m_maxBlockSize - len;
-        if(copy > m_resBuffSize) copy = m_resBuffSize;    // OMNIA Log59 (R5): never OOB into residual
-        memcpy(m_endPtr, m_buffer.get(), copy);           // cpy from m_buffer to m_endPtr with len
+    int32_t tail_len = m_endPtr - m_readPtr;
+
+    // Copy into residual tail ONLY if:
+    //  1) we need it (tail < maxBlockSize)
+    //  2) ring buffer is wrapped (readPtr > writePtr), i.e. valid data continues at buffer start
+    if (tail_len < (int32_t)m_maxBlockSize && m_readPtr > m_writePtr) {
+
+        size_t need = (size_t)m_maxBlockSize - (size_t)tail_len;
+
+        // Only copy bytes that are actually written at the start of the ring buffer
+        size_t avail_start = (size_t)(m_writePtr - m_buffer.get());
+
+        size_t copy = need;
+        if (copy > avail_start) copy = avail_start;
+        if (copy > m_resBuffSize) copy = m_resBuffSize;
+
+        if (copy > 0) {
+            memcpy(m_endPtr, m_buffer.get(), copy);
+        }
     }
     return m_readPtr;
 }
