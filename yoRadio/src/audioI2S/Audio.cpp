@@ -803,8 +803,18 @@ bool Audio::connecttohost(const char* host, const char* user, const char* pwd) {
                        rqh.append(path.get());
                        rqh.append(" HTTP/1.1\r\n");
                        rqh.appendf("Host: %s\r\n", rqh_host.get());
-                       rqh.append("Icy-MetaData:1\r\n");
-                       rqh.append("Icy-MetaData:2\r\n");
+                       {
+                       auto url_has_flac_hint = [](const char* s)->bool{
+                           if(!s) return false;
+                           // минимально и максимально совместимо: без strcasestr
+                           return (strstr(s, "flac") != nullptr) || (strstr(s, "FLAC") != nullptr);
+                       };
+                       bool want_icy = true;
+                       if(url_has_flac_hint(host) || url_has_flac_hint(rqh_host.get()) || url_has_flac_hint(path.get())) {
+                           want_icy = false;
+                       }
+                       if(want_icy) rqh.append("Icy-MetaData:1\r\n");
+                       }
                        rqh.append("Pragma: no-cache\r\n");
                        rqh.append("Cache-Control: no-cache\r\n");
                        rqh.append("Range: bytes=0-\r\n");
@@ -931,8 +941,18 @@ bool Audio::httpPrint(const char* host) {
     rqh.append(path.get());
     rqh.append(" HTTP/1.1\r\n");
     rqh.appendf("Host: %s\r\n", rqh_host.get());
-    rqh.append("Icy-MetaData:1\r\n");
-    rqh.append("Icy-MetaData:2\r\n");
+    {
+    auto url_has_flac_hint = [](const char* s)->bool{
+        if(!s) return false;
+        // минимально и максимально совместимо: без strcasestr
+        return (strstr(s, "flac") != nullptr) || (strstr(s, "FLAC") != nullptr);
+    };
+    bool want_icy = true;
+    if(url_has_flac_hint(host) || url_has_flac_hint(rqh_host.get()) || url_has_flac_hint(path.get())) {
+        want_icy = false;
+    }
+    if(want_icy) rqh.append("Icy-MetaData:1\r\n");
+    }
     rqh.append("Accept:*/*\r\n");
     rqh.append("User-Agent: VLC/3.0.21 LibVLC/3.0.21 AppleWebKit/537.36 (KHTML, like Gecko)\r\n");
     rqh.append("Accept-Encoding: identity;q=1,*;q=0\r\n");
@@ -5109,6 +5129,7 @@ bool Audio::parseHttpResponseHeader() { // this is the response to a GET / reque
             int32_t     i_metaint = atoi(c_metaint);
             m_metaint = i_metaint;
             if(m_metaint) m_f_metadata = true; // Multimediastream
+            AUDIO_INFO("icy-metaint: %ld (metadata %s)", (long)m_metaint, m_metaint ? "ON" : "OFF");
         }
 
         else if(rhl.starts_with_icase("icy-name:")) {
@@ -8509,37 +8530,7 @@ bool Audio::omnia_aacSeekMs(uint32_t ms){
   AUDIO_INFO("aacSeekMs fallback proportional ms=%lu -> pos %lu", (unsigned long)ms, (unsigned long)pos);
   return setFilePos(pos);
 }
- Chat20
-      if(basePos < start) basePos = start;
-      if(basePos >= endPos) basePos = endPos - 1;
-      File *f = m_aacIdxFileSeek ? &m_aacIdxFileSeek : (m_aacIdxFileBuild ? &m_aacIdxFileBuild : nullptr);
-      uint32_t curPos = basePos;
-      if(f) f->seek(curPos, SeekSet);
-      else { if(audioFileSeek(curPos)!=0) return false; }
-      uint64_t targetSamples = (uint64_t)ms * m_aacSampleRate / 1000ULL;
-      uint64_t curSamples = (uint64_t)sec * m_aacSampleRate;
-      uint8_t hdr[10];
-      while(curSamples < targetSamples){
-        int rd = f ? f->read(hdr,7) : audioFileRead(hdr,7);
-        if(rd!=7) break;
-        uint32_t fl, sr, smp;
-        if(!adtsParseHeader(hdr, fl, sr, smp)) break;
-        curSamples += smp;
-        curPos += fl;
-        if(f){
-          if(fl>7) f->seek(curPos, SeekSet);
-        } else {
-          if(fl>7) audioFileSeek(curPos);
-        }
-        if(curSamples >= targetSamples) break;
-      }
-      if(curPos >= endPos) curPos = endPos - 1;
-      AUDIO_INFO("aacSeekMs FAST sec=%lu basePos=%lu curPos=%lu targetMs=%lu", (unsigned long)sec, (unsigned long)basePos, (unsigned long)curPos, (unsigned long)ms);
-      return setFilePos(curPos);
-    }
-  }
-
-  // Fallback proportional if no index
+ack proportional if no index
   uint32_t offset = (m_aacDurMs) ? (uint64_t)ms * audioSize / m_aacDurMs : 0;
   uint32_t pos = audioStart + offset;
   if(pos >= endPos) pos = endPos - 1;
