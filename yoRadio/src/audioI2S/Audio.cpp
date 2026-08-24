@@ -63,6 +63,21 @@ static const char* mfErrName(int e){
         default:  return "ERR";
     }
 }
+
+// Log61 (FIX A): compute Ogg page size from capture-pattern + lacing table.
+// Returns true once the 27-byte header + segment table are present (safe bounds).
+// page_total may be larger than n — caller waits for fill instead of feeding a cut page.
+static bool mf_parse_ogg_page_total(const uint8_t* p, size_t n, size_t* out_total) {
+    if (!p || !out_total || n < 27) return false;
+    if (!(p[0]=='O' && p[1]=='g' && p[2]=='g' && p[3]=='S')) return false;
+    const uint8_t segs = p[26];
+    const size_t hdr = 27 + (size_t)segs;
+    if (n < hdr) return false;
+    size_t body = 0;
+    for (size_t i = 0; i < segs; ++i) body += p[27 + i];
+    *out_total = hdr + body;
+    return true;
+}
 #ifndef OMNIA_SMALL_OGG_OPUS_VORBIS
 // current "big ogg page" mode
 constexpr size_t    m_frameSizeOPUS      = UINT16_MAX; // Ogg pages may be large (was 2048)
@@ -4796,6 +4811,36 @@ void Audio::playAudioData() {
     else{
         // For micro-flac WEB allow earlier decode at MIN_DECODE, not full maxBlockSize
         if(m_codec == CODEC_FLAC && m_mf_active){
+            // Log61 FIX A: Ogg page-aware feed — grow block to full page, wait if incomplete
+            {
+                const size_t filled = InBuff.bufferFilled();
+                uint8_t* rp = InBuff.getReadPtr();
+                uint16_t curBlock = InBuff.getMaxBlockSize();
+                size_t pageTotal = 0;
+                if(rp && mf_parse_ogg_page_total(rp, filled, &pageTotal)){
+                    if(pageTotal > (size_t)curBlock){
+                        size_t newBlock = pageTotal;
+                        if(newBlock > (size_t)MF_WEB_BLOCK_MAX) newBlock = (size_t)MF_WEB_BLOCK_MAX;
+                        InBuff.changeMaxBlockSize((uint16_t)newBlock);
+                        m_mf_webBlock = InBuff.getMaxBlockSize();
+                        m_mf_feedCap = m_mf_webBlock;
+                        AUDIO_INFO("microflac ogg page total=%u grow block %u->%u filled=%u",
+                                   (unsigned)pageTotal, (unsigned)curBlock, (unsigned)m_mf_webBlock, (unsigned)filled);
+                        curBlock = m_mf_webBlock;
+                        m_pad.bytesToDecode = min(filled, (size_t)curBlock);
+                    }
+                    if(filled < pageTotal){
+                        static uint32_t s_waitPageMs = 0;
+                        if(millis() - s_waitPageMs > 500){
+                            s_waitPageMs = millis();
+                            AUDIO_INFO("microflac wait full ogg page %u/%u", (unsigned)filled, (unsigned)pageTotal);
+                        }
+                        m_pad.bytesDecoded = 0;
+                        m_f_audioTaskIsDecoding = false;
+                        return; // wait for full page — do not call sendBytes
+                    }
+                }
+            }
             if(InBuff.bufferFilled() >= MF_WEB_MIN_DECODE) m_pad.bytesDecoded = sendBytes(InBuff.getReadPtr(), m_pad.bytesToDecode);
             else m_pad.bytesDecoded = 0;
         } else {
@@ -5759,8 +5804,8 @@ void Audio::setDecoderItems() {
             AUDIO_INFO("Bitrate: %lu", m_nominal_bitrate);
         }*/
     }
-    if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24) {
-        AUDIO_ERROR("Bits per sample must be 8 or 16 or 24, found %i", m_sourceBitsPerSample);
+    if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24 && m_sourceBitsPerSample != 32) {
+        AUDIO_ERROR("Bits per sample must be 8/16/24/32, found %i", m_sourceBitsPerSample);
         stopSong();
     }
     if(getBitsPerSample() != 8 && getBitsPerSample() != 16) {
@@ -5932,8 +5977,8 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
 
                         // --- FLAGSHIP: replicate the important tail of setDecoderItems() without calling legacy FLACGet* ---
                         // NOTE: do NOT stopSong on a 24-bit source - it is valid for WEB FLAC (Log59 Indigo)
-                        if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24) {
-                            AUDIO_ERROR("microflac: Bits per sample must be 8/16/24, found %i", m_sourceBitsPerSample);
+                        if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24 && m_sourceBitsPerSample != 32) {
+                            AUDIO_ERROR("microflac: Bits per sample must be 8/16/24/32, found %i", m_sourceBitsPerSample);
                             stopSong();
                             return -1;
                         }
@@ -6098,7 +6143,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     m_mf_errSoftCnt++;
                     if(m_mf_errSoftCnt > MF_WEB_ERR_SOFT_LIMIT){
                         AUDIO_ERROR("microflac too many soft errors (%u/10s) -> reconnect", (unsigned)m_mf_errSoftCnt);
-                        stallReconnect("mf_err_storm");
+                        stallReconnect("mfSoftErrBurst");
                         return 0; // CRITICAL: never continue after reconnect
                     }
 
@@ -6715,6 +6760,11 @@ bool Audio::setBitsPerSample(int bits) {
     }
     if(bits == 24){
         m_bitsPerSample = 16; // downconvert output, keep 24 as source
+        return true;
+    }
+    if(bits == 32){
+        m_sourceBitsPerSample = 32;
+        m_bitsPerSample = 16; // downconvert output like 24-bit WEB FLAC
         return true;
     }
     return false;
@@ -8387,6 +8437,44 @@ bool Audio::omnia_aacSeekMs(uint32_t ms){
     if(sec < m_aacBuildNextSec){
       uint32_t start = m_audioDataStart;
       uint32_t endPos = start + (m_audioDataSize ? m_audioDataSize : m_audioFileSize);
+      uint32_t basePos = m_aacSecOff[sec]; // ABS per Chat20
+      if(basePos < start) basePos = start;
+      if(basePos >= endPos) basePos = endPos - 1;
+      File *f = m_aacIdxFileSeek ? &m_aacIdxFileSeek : (m_aacIdxFileBuild ? &m_aacIdxFileBuild : nullptr);
+      uint32_t curPos = basePos;
+      if(f) f->seek(curPos, SeekSet);
+      else { if(audioFileSeek(curPos)!=0) return false; }
+      uint64_t targetSamples = (uint64_t)ms * m_aacSampleRate / 1000ULL;
+      uint64_t curSamples = (uint64_t)sec * m_aacSampleRate;
+      uint8_t hdr[10];
+      while(curSamples < targetSamples){
+        int rd = f ? f->read(hdr,7) : audioFileRead(hdr,7);
+        if(rd!=7) break;
+        uint32_t fl, sr, smp;
+        if(!adtsParseHeader(hdr, fl, sr, smp)) break;
+        curSamples += smp;
+        curPos += fl;
+        if(f){
+          if(fl>7) f->seek(curPos, SeekSet);
+        } else {
+          if(fl>7) audioFileSeek(curPos);
+        }
+        if(curSamples >= targetSamples) break;
+      }
+      if(curPos >= endPos) curPos = endPos - 1;
+      AUDIO_INFO("aacSeekMs FAST sec=%lu basePos=%lu curPos=%lu targetMs=%lu", (unsigned long)sec, (unsigned long)basePos, (unsigned long)curPos, (unsigned long)ms);
+      return setFilePos(curPos);
+    }
+  }
+
+  // Fallback proportional if no index
+  uint32_t offset = (m_aacDurMs) ? (uint64_t)ms * audioSize / m_aacDurMs : 0;
+  uint32_t pos = audioStart + offset;
+  if(pos >= endPos) pos = endPos - 1;
+  AUDIO_INFO("aacSeekMs fallback proportional ms=%lu -> pos %lu", (unsigned long)ms, (unsigned long)pos);
+  return setFilePos(pos);
+}
+ize : m_audioFileSize);
       uint32_t basePos = m_aacSecOff[sec]; // ABS per Chat20
       if(basePos < start) basePos = start;
       if(basePos >= endPos) basePos = endPos - 1;
