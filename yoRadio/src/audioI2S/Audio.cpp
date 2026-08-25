@@ -3228,6 +3228,9 @@ size_t Audio::process_m3u8_ID3_Header(uint8_t* packet) {
 }
 //****************************************************************************************
 uint32_t Audio::stopSong() {
+    static bool s_inStopSong = false;
+    if (s_inStopSong) return 0;
+    s_inStopSong = true;
     m_f_lockInBuffer = true; // wait for the decoding to finish
         uint32_t i = 0;
         while(m_f_audioTaskIsDecoding && (++i < 300)) {vTaskDelay(1);} // wait up to 300ms, avoid freeing while decoding (was 100)
@@ -3237,7 +3240,8 @@ uint32_t Audio::stopSong() {
             m_f_running = false;
             // close network safely (avoid calling stop() via m_client pointer) - Fix for Log28/Log31 crash at Closing web file, stop only active client
             if(m_dataMode == AUDIO_DATA || m_streamType == ST_WEBFILE || m_f_stream){
-                AUDIO_INFO("Closing web file \"%s\" (ssl=%d)", m_lastHost.c_get(), (int)m_f_ssl);
+                const char* h = m_lastHost.valid() ? m_lastHost.c_get() : "<null>";
+                AUDIO_INFO("Closing web file \"%s\" (ssl=%d)", h, (int)m_f_ssl);
                 // Stop ONLY the active client, and only if still connected
                 if(m_f_ssl){
                     if(clientsecure.connected()) clientsecure.stop();
@@ -3274,6 +3278,7 @@ uint32_t Audio::stopSong() {
         m_playlistFormat = FORMAT_NONE;
         m_f_lockInBuffer = false;
 //    return currTime;
+    s_inStopSong = false;
     return pos;
 }
 //****************************************************************************************
