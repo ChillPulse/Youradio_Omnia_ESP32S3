@@ -6157,9 +6157,18 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                                 AUDIO_INFO("microflac NEED_MORE(progress) cons=%u total_cons=%u left=%u filled=%u header=%u",
                                            (unsigned)bytes_consumed, (unsigned)total_consumed, (unsigned)left,
                                            (unsigned)InBuff.bufferFilled(), (unsigned)m_mf_header_ready);
+                                AUDIO_INFO("microflac NATIVE_DIAG last_native_res=%d in=%u idx=%u",
+                                           (int)g_mf.get_last_native_result(),
+                                           (unsigned)g_mf.get_last_native_input_len(),
+                                           (unsigned)g_mf.get_last_native_bytes_index());
                             }
                         }
-                        // no more progress possible in this call
+                        // If we consumed bytes and still have input left in this same window,
+                        // try another decode() iteration (bounded by MF_WEB_MAX_LOOPS).
+                        if (bytes_consumed > 0 && left > 0) {
+                            continue;
+                        }
+                        // otherwise no more progress possible in this call
                         break;
                     }
 

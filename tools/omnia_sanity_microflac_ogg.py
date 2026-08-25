@@ -28,5 +28,16 @@ if "get_ogg_stash_len" not in ht:
     print("FAIL: missing get_ogg_stash_len() in flac_decoder.h")
     sys.exit(2)
 
+# Native decode diag must exist
+for n in ["get_last_native_result", "get_last_native_input_len", "get_last_native_bytes_index"]:
+    if n not in ht:
+        print(f"FAIL: missing {n}() in flac_decoder.h")
+        sys.exit(2)
+
+for n in ["last_native_result_", "last_native_input_len_", "last_native_bytes_index_"]:
+    if n not in ht:
+        print(f"FAIL: missing {n} field in flac_decoder.h")
+        sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)

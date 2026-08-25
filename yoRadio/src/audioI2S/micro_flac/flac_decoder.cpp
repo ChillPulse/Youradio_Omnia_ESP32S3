@@ -445,8 +445,14 @@ FLACDecoderResult FLACDecoder::decode_native(const uint8_t* input, size_t input_
         auto result = this->decode_frame(input, input_len, output, &num_samples, output_32bit);
         bytes_consumed = this->get_bytes_index();
 
+        // DIAG: expose real consumption vs offered input (Log72)
+        this->last_native_result_ = (int8_t)result;
+        this->last_native_input_len_ = input_len;
+        this->last_native_bytes_index_ = bytes_consumed;
+
         if (result == FLAC_DECODER_NEED_MORE_DATA) {
-            bytes_consumed = input_len;  // decode_frame consumed all input
+            // IMPORTANT: do NOT force-consume input_len here.
+            // If get_bytes_index() < input_len, forcing input_len discards bytes that may contain the rest of the frame.
             return FLAC_DECODER_NEED_MORE_DATA;
         }
         if (result == FLAC_DECODER_SUCCESS) {

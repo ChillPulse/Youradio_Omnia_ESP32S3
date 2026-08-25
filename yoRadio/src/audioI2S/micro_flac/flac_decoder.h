@@ -412,6 +412,11 @@ public:
     uint8_t get_last_ogg_is_end_of_packet() const { return last_ogg_is_end_of_packet_; }
     size_t  get_ogg_stash_len() const { return ogg_stash_.size(); }
 
+    // Log72: expose native decode consumption diagnostics
+    int8_t  get_last_native_result() const { return last_native_result_; }
+    size_t  get_last_native_input_len() const { return last_native_input_len_; }
+    size_t  get_last_native_bytes_index() const { return last_native_bytes_index_; }
+
 private:
     // ========================================
     // Private Types
@@ -697,6 +702,11 @@ private:
     uint8_t last_ogg_is_end_of_packet_ = 0;
     std::vector<uint8_t> ogg_stash_;
 #endif
+
+    // Log72: native decode diagnostics
+    int8_t last_native_result_ = 0;
+    size_t last_native_input_len_ = 0;
+    size_t last_native_bytes_index_ = 0;
 
     // Metadata storage
     std::unique_ptr<std::vector<FLACMetadataBlock>> metadata_blocks_;
