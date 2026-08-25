@@ -14,3 +14,7 @@ jobs:
       - name: Python sanity check for Audio.cpp
         run: |
           python3 tools/omnia_sanity_audio_cpp.py
+
+      - name: Python sanity check for microflac ogg stash
+        run: |
+          python3 tools/omnia_sanity_microflac_ogg.py

@@ -500,6 +500,37 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             return FLAC_DECODER_NEED_MORE_DATA;
         }
 
+        // --- OMNIA-PATCH Log70/71: drain stashed leftover FLAC bytes before pulling more Ogg data ---
+        // If we previously stashed extra bytes (native_consumed < body_len on SUCCESS/HEADER_READY),
+        // they were already "consumed" from the Ogg input window. Now we must decode them without
+        // consuming new Ogg bytes.
+        if (!this->ogg_stash_.empty()) {
+
+            const uint8_t* s = this->ogg_stash_.data();
+            const size_t   s_len = this->ogg_stash_.size();
+
+            size_t native_consumed = 0;
+            size_t native_samples  = 0;
+
+            auto r = this->decode_native(s, s_len, output, native_consumed, native_samples, output_32bit);
+            samples_decoded = native_samples;
+
+            // Diagnostics
+            this->last_ogg_body_len_ = s_len;
+            this->last_ogg_native_consumed_ = native_consumed;
+
+            if (native_consumed > 0) {
+                this->ogg_stash_.erase(this->ogg_stash_.begin(),
+                                       this->ogg_stash_.begin() + (ptrdiff_t)native_consumed);
+            }
+
+            if (r == FLAC_DECODER_NEED_MORE_DATA) {
+                // Need more bytes: fall through and pull more from ogg demuxer.
+            } else {
+                return r; // SUCCESS / HEADER_READY / END_OF_STREAM / error
+            }
+        }
+
         auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
         this->last_ogg_result_ = (int8_t)state.result;
         if (this->ogg_demuxer_->has_last_header()) {
@@ -567,6 +598,7 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
         }
 
+        this->last_ogg_is_end_of_packet_ = state.packet.is_end_of_packet ? 1 : 0;
         if (state.packet.is_eos && state.packet.is_last_on_page) {
             this->ogg_eos_seen_ = true;
         }
@@ -619,6 +651,11 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             const size_t rem = body_len - native_consumed;
             // safety cap to avoid runaway memory usage
             if (rem > 0 && rem <= 65535) {
+                // Total stash safety cap (prevents unlimited growth on malformed streams)
+                if (this->ogg_stash_.size() + rem > 131072) { // 128 KB cap
+                    this->ogg_stash_.clear();
+                    return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
+                }
                 this->ogg_stash_.insert(this->ogg_stash_.end(), body + native_consumed, body + body_len);
                 native_consumed = body_len;
             } else {
