@@ -39,5 +39,11 @@ for n in ["last_native_result_", "last_native_input_len_", "last_native_bytes_in
         print(f"FAIL: missing {n} field in flac_decoder.h")
         sys.exit(2)
 
+for n in ["get_last_ogg_dbg_state", "get_last_ogg_dbg_assembling", "get_last_ogg_dbg_skipping",
+          "get_last_ogg_dbg_packet_size", "get_last_ogg_dbg_buf_cap"]:
+    if n not in ht:
+        print(f"FAIL: missing {n}() in flac_decoder.h")
+        sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)

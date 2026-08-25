@@ -18,6 +18,10 @@
  * Platform-agnostic, zero dependencies
  */
 
+#ifndef MICRO_OGG_DEMUXER_DEBUG
+#define MICRO_OGG_DEMUXER_DEBUG 1
+#endif
+
 #ifndef MICRO_OGG_DEMUXER_H
 #define MICRO_OGG_DEMUXER_H
 

@@ -280,7 +280,7 @@ FLACDecoderResult FLACDecoder::decode_impl(const uint8_t* input, size_t input_le
             // radio streams with big pages/packets.
             micro_ogg::OggDemuxerConfig cfg;
             cfg.min_buffer_size = 16384;
-            cfg.max_buffer_size = 1024 * 1024; // 1MB PSRAM
+            cfg.max_buffer_size = 4 * 1024 * 1024; // 4MB PSRAM (ESP32-S3-N16R8 has 8MB PSRAM)
             cfg.enable_crc = false;
 #if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
             cfg.alloc = ogg_psram_alloc;
@@ -547,6 +547,31 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             this->last_ogg_segment_count_ = h.segment_count;
         }
         bytes_consumed += state.bytes_consumed;
+
+#ifdef MICRO_OGG_DEMUXER_DEBUG
+        int dbg_state = 0;
+        bool dbg_assembling = false;
+        bool dbg_skipping = false;
+        size_t dbg_packet_size = 0;
+        size_t dbg_body_consumed = 0;
+        uint8_t dbg_seg_index = 0;
+        uint8_t dbg_seg_count = 0;
+        this->ogg_demuxer_->get_debug_state(dbg_state, dbg_assembling, dbg_skipping,
+                                           dbg_packet_size, dbg_body_consumed,
+                                           dbg_seg_index, dbg_seg_count);
+        this->last_ogg_dbg_state_ = dbg_state;
+        this->last_ogg_dbg_assembling_ = dbg_assembling;
+        this->last_ogg_dbg_skipping_ = dbg_skipping;
+        this->last_ogg_dbg_packet_size_ = dbg_packet_size;
+        this->last_ogg_dbg_body_consumed_ = dbg_body_consumed;
+        this->last_ogg_dbg_seg_index_ = dbg_seg_index;
+        this->last_ogg_dbg_seg_count_ = dbg_seg_count;
+
+        size_t cap = 0, peak = 0;
+        this->ogg_demuxer_->get_buffer_stats(cap, peak);
+        this->last_ogg_dbg_buf_cap_ = cap;
+        this->last_ogg_dbg_buf_peak_ = peak;
+#endif
 
         if (state.result == micro_ogg::OGG_NEED_MORE_DATA) {
             if (this->ogg_eos_seen_) {

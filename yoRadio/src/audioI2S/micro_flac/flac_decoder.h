@@ -417,6 +417,17 @@ public:
     size_t  get_last_native_input_len() const { return last_native_input_len_; }
     size_t  get_last_native_bytes_index() const { return last_native_bytes_index_; }
 
+    // Ogg demux debug snapshot (MICRO_OGG_DEMUXER_DEBUG)
+    int  get_last_ogg_dbg_state() const { return last_ogg_dbg_state_; }
+    bool get_last_ogg_dbg_assembling() const { return last_ogg_dbg_assembling_; }
+    bool get_last_ogg_dbg_skipping() const { return last_ogg_dbg_skipping_; }
+    size_t get_last_ogg_dbg_packet_size() const { return last_ogg_dbg_packet_size_; }
+    size_t get_last_ogg_dbg_body_consumed() const { return last_ogg_dbg_body_consumed_; }
+    uint8_t get_last_ogg_dbg_seg_index() const { return last_ogg_dbg_seg_index_; }
+    uint8_t get_last_ogg_dbg_seg_count() const { return last_ogg_dbg_seg_count_; }
+    size_t get_last_ogg_dbg_buf_cap() const { return last_ogg_dbg_buf_cap_; }
+    size_t get_last_ogg_dbg_buf_peak() const { return last_ogg_dbg_buf_peak_; }
+
 private:
     // ========================================
     // Private Types
@@ -707,6 +718,17 @@ private:
     int8_t last_native_result_ = 0;
     size_t last_native_input_len_ = 0;
     size_t last_native_bytes_index_ = 0;
+
+    // Ogg demux debug snapshot (MICRO_OGG_DEMUXER_DEBUG)
+    int    last_ogg_dbg_state_ = 0;
+    bool   last_ogg_dbg_assembling_ = false;
+    bool   last_ogg_dbg_skipping_ = false;
+    size_t last_ogg_dbg_packet_size_ = 0;
+    size_t last_ogg_dbg_body_consumed_ = 0;
+    uint8_t last_ogg_dbg_seg_index_ = 0;
+    uint8_t last_ogg_dbg_seg_count_ = 0;
+    size_t last_ogg_dbg_buf_cap_ = 0;
+    size_t last_ogg_dbg_buf_peak_ = 0;
 
     // Metadata storage
     std::unique_ptr<std::vector<FLACMetadataBlock>> metadata_blocks_;

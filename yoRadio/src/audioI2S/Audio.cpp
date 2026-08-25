@@ -6161,6 +6161,17 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                                            (int)g_mf.get_last_native_result(),
                                            (unsigned)g_mf.get_last_native_input_len(),
                                            (unsigned)g_mf.get_last_native_bytes_index());
+                                AUDIO_INFO("microflac OGG_DBG state=%d assembling=%u skipping=%u pkt=%u bodyCons=%u seg=%u/%u bufCap=%u bufPeak=%u",
+                                    (int)g_mf.get_last_ogg_dbg_state(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_assembling(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_skipping(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_packet_size(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_body_consumed(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_seg_index(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_seg_count(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_buf_cap(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_buf_peak()
+                                );
                             }
                         }
                         // If we consumed bytes and still have input left in this same window,
