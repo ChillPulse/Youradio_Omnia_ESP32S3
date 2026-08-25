@@ -407,6 +407,10 @@ public:
     uint32_t get_last_ogg_sequence() const { return last_ogg_sequence_; }
     uint8_t  get_last_ogg_header_type() const { return last_ogg_header_type_; }
     uint8_t  get_last_ogg_segment_count() const { return last_ogg_segment_count_; }
+    size_t  get_last_ogg_body_len() const { return last_ogg_body_len_; }
+    size_t  get_last_ogg_native_consumed() const { return last_ogg_native_consumed_; }
+    uint8_t get_last_ogg_is_end_of_packet() const { return last_ogg_is_end_of_packet_; }
+    size_t  get_ogg_stash_len() const { return ogg_stash_.size(); }
 
 private:
     // ========================================
@@ -688,6 +692,10 @@ private:
     uint32_t last_ogg_sequence_ = 0;
     uint8_t  last_ogg_header_type_ = 0;
     uint8_t  last_ogg_segment_count_ = 0;
+    size_t  last_ogg_body_len_ = 0;
+    size_t  last_ogg_native_consumed_ = 0;
+    uint8_t last_ogg_is_end_of_packet_ = 0;
+    std::vector<uint8_t> ogg_stash_;
 #endif
 
     // Metadata storage

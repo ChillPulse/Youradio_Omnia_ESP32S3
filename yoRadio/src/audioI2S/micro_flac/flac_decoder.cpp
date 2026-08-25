@@ -185,6 +185,11 @@ void FLACDecoder::reset() {
     this->ogg_bos_processed_ = false;
     this->ogg_bos_prefix_consumed_ = 0;
     this->ogg_eos_seen_ = false;
+    this->last_ogg_body_len_ = 0;
+    this->last_ogg_native_consumed_ = 0;
+    this->last_ogg_is_end_of_packet_ = 0;
+    this->ogg_stash_.clear();
+    this->ogg_stash_.shrink_to_fit(); // допустимо, но можно просто clear()
 #endif
 
     // Reset stream info (new stream may have different parameters)
@@ -605,11 +610,27 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
                                           output_32bit);
         samples_decoded = native_samples;
 
-        // --- BEGIN FIX (Log64): do NOT drop frame state on NEED_MORE in Ogg-FLAC ---
-        // micro-flac reference behavior (v0.2.0): NEED_MORE means "continue feeding", state must persist.
+        this->last_ogg_body_len_ = body_len;
+        this->last_ogg_native_consumed_ = native_consumed;
+
+        // If decode_native produced a result but didn't consume all offered bytes,
+        // stash the remainder and treat the packet bytes as consumed.
+        if ((result == FLAC_DECODER_SUCCESS || result == FLAC_DECODER_HEADER_READY) && native_consumed < body_len) {
+            const size_t rem = body_len - native_consumed;
+            // safety cap to avoid runaway memory usage
+            if (rem > 0 && rem <= 65535) {
+                this->ogg_stash_.insert(this->ogg_stash_.end(), body + native_consumed, body + body_len);
+                native_consumed = body_len;
+            } else {
+                return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
+            }
+        }
+
+        // Keep the original invariant check for unexpected cases
         if (native_consumed != body_len) {
             return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
         }
+
         if (result == FLAC_DECODER_NEED_MORE_DATA) {
             continue;
         }
@@ -622,8 +643,7 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         if (result == FLAC_DECODER_END_OF_STREAM) {
             return FLAC_DECODER_END_OF_STREAM;
         }
-        return result;  // error
-        // --- END FIX ---
+        return result;
     }
 }
 #endif  // MICRO_FLAC_DISABLE_OGG

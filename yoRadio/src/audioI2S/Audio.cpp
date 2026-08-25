@@ -65,6 +65,26 @@ static const char* mfErrName(int e){
     }
 }
 
+static const char* oggDemuxName(int e){
+    switch(e){
+        case 0:   return "OGG_OK";
+        case 1:   return "OGG_NEED_MORE_DATA";
+        case 2:   return "OGG_PACKET_SKIPPED";
+        case -1:  return "OGG_INVALID_CAPTURE";
+        case -2:  return "OGG_INVALID_VERSION";
+        case -3:  return "OGG_CRC_FAILED";
+        case -4:  return "OGG_STREAM_SEQUENCE_ERROR";
+        case -5:  return "OGG_STREAM_BOS_ERROR";
+        case -6:  return "OGG_STREAM_EOS_ERROR";
+        case -7:  return "OGG_STREAM_SERIAL_MISMATCH";
+        case -8:  return "OGG_STREAM_CONTINUATION_ERROR";
+        case -9:  return "OGG_ALLOCATION_FAILED";
+        case -10: return "OGG_INVALID_MODE_SWITCH";
+        case -11: return "OGG_INVALID_INPUT";
+        default:  return "OGG_?";
+    }
+}
+
 // Log61 (FIX A): compute Ogg page size from capture-pattern + lacing table.
 // Returns true once the 27-byte header + segment table are present (safe bounds).
 // page_total may be larger than n — caller waits for fill instead of feeding a cut page.
@@ -6154,6 +6174,31 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                             AUDIO_ERROR("microflac err %d (%s) cons=%u left=%u header=%u out=%u",
                                         (int)mf_res, mfErrName((int)mf_res), (unsigned)bytes_consumed,
                                         (unsigned)left, (unsigned)m_mf_header_ready, (unsigned)(m_mf_out32 != nullptr));
+                            if((int)mf_res == micro_flac::FLAC_DECODER_ERROR_OGG_DEMUX){
+                                int ogg_res = (int)g_mf.get_last_ogg_result();
+
+                                uint8_t h0 = (left > 0) ? p[0] : 0;
+                                uint8_t h1 = (left > 1) ? p[1] : 0;
+                                uint8_t h2 = (left > 2) ? p[2] : 0;
+                                uint8_t h3 = (left > 3) ? p[3] : 0;
+
+                                size_t pageTotal = 0;
+                                bool havePageTotal = mf_parse_ogg_page_total(p, left, &pageTotal);
+
+                                AUDIO_ERROR("microflac OGG_DIAG ogg_res=%d(%s) serial=%lu seq=%lu htype=%u segs=%u endpkt=%u body=%lu native=%lu stash=%lu page=%lu head=%02X%02X%02X%02X",
+                                    ogg_res, oggDemuxName(ogg_res),
+                                    (unsigned long)g_mf.get_last_ogg_serial(),
+                                    (unsigned long)g_mf.get_last_ogg_sequence(),
+                                    (unsigned)g_mf.get_last_ogg_header_type(),
+                                    (unsigned)g_mf.get_last_ogg_segment_count(),
+                                    (unsigned)g_mf.get_last_ogg_is_end_of_packet(),
+                                    (unsigned long)g_mf.get_last_ogg_body_len(),
+                                    (unsigned long)g_mf.get_last_ogg_native_consumed(),
+                                    (unsigned long)g_mf.get_ogg_stash_len(),
+                                    (unsigned long)(havePageTotal ? pageTotal : 0),
+                                    h0,h1,h2,h3
+                                );
+                            }
                         }
                     }
 
