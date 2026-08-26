@@ -6019,7 +6019,17 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     size_t out_cap = out ? m_mf_out32_cap : 0;
 
                     // out may be nullptr before HEADER_READY - micro-flac API allows this
+                    uint32_t t_us0 = micros();
                     auto mf_res = g_mf.decode(p, left, out, out_cap, bytes_consumed, samples_decoded);
+                    uint32_t dt_us = micros() - t_us0;
+                    // Rate-limited: print only if decode call is "slow"
+                    static uint32_t s_mfSlowMs = 0;
+                    if (dt_us > 20000 && (millis() - s_mfSlowMs) > 700) {
+                        s_mfSlowMs = millis();
+                        AUDIO_ERROR("microflac SLOW decode dt=%luus left=%u out=%u hdr=%u",
+                                    (unsigned long)dt_us, (unsigned)left,
+                                    (unsigned)(out != nullptr), (unsigned)m_mf_header_ready);
+                    }
                     m_mf_lastRes = (int8_t)mf_res;
 
                     // progress bookkeeping

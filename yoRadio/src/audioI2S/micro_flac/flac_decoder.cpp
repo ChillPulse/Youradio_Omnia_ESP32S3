@@ -500,9 +500,9 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
     while (true) {
         size_t remaining = input_len - bytes_consumed;
 
-        // OMNIA-PATCH Log59 (3.5): time budget at iteration boundary — ONLY with progress
-        // (or exhausted input). Never a bare NEED_MORE with 0 consume while input remains.
-        if (bytes_consumed > 0 && (mf_millis() - t0) > 40) {
+        // HARD budget: decode_ogg must return to caller regularly to avoid starving WiFi/Web/UI tasks (Log78).
+        // Returning NEED_MORE with bytes_consumed==0 is acceptable; caller will retry on the next tick.
+        if ((mf_millis() - t0) > 20) {
             return FLAC_DECODER_NEED_MORE_DATA;
         }
 
@@ -628,10 +628,13 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
                 size_t r = input_len - bytes_consumed;
 
                 size_t k = 0;
-                for (; k + 3 < r; k++) {
+                // Limit linear scan per call (prevents 64K search storms)
+                size_t scan_limit = r;
+                if (scan_limit > 4096) scan_limit = 4096;
+                for (; k + 3 < scan_limit; k++) {
                     if (p[k] == 'O' && p[k + 1] == 'g' && p[k + 2] == 'g' && p[k + 3] == 'S') break;
                 }
-                if (k + 3 < r) {
+                if (k + 3 < scan_limit) {
                     bytes_consumed += k;   // NOTE: may be 0 (valid!)
                     continue;
                 }
@@ -701,6 +704,19 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         size_t off = 0;
 
         while (off < body_len) {
+            // Prevent long byte-by-byte scanning of large packets from blocking the system (Log78).
+            if ((mf_millis() - t0) > 20) {
+                // stash remainder so we don't lose bytes (cap enforced elsewhere)
+                if (off < body_len) {
+                    const size_t rem = body_len - off;
+                    if (this->ogg_stash_.size() + rem <= 131072) {
+                        this->ogg_stash_.insert(this->ogg_stash_.end(), body + off, body + body_len);
+                    } else {
+                        this->ogg_stash_.clear();
+                    }
+                }
+                return FLAC_DECODER_NEED_MORE_DATA;
+            }
 
             size_t native_consumed = 0;
             size_t native_samples  = 0;

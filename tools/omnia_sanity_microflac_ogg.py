@@ -89,5 +89,13 @@ if "bytes_consumed = 1;  // anti-stuck: guarantee window advance" in txt:
     print("FAIL: flac_decoder.cpp still forces bytes_consumed=1 on OGG_NEED_MORE_DATA (sync break risk)")
     sys.exit(2)
 
+if "bytes_consumed > 0 && (mf_millis() - t0) > 40" in txt:
+    print("FAIL: decode_ogg still uses progress-only time budget (can hang Log78)")
+    sys.exit(2)
+
+if "Prevent long byte-by-byte scanning of large packets" not in txt:
+    print("FAIL: missing packet slicing time-budget guard")
+    sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)
