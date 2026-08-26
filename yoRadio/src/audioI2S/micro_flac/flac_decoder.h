@@ -407,7 +407,7 @@ public:
     uint32_t get_last_ogg_sequence() const { return last_ogg_sequence_; }
     uint8_t  get_last_ogg_header_type() const { return last_ogg_header_type_; }
     uint8_t  get_last_ogg_segment_count() const { return last_ogg_segment_count_; }
-    size_t  get_last_ogg_body_len() const { return last_ogg_body_len_; }
+    size_t  get_last_ogg_body_len() const { return last_ogg_body_len_dbg_; }
     size_t  get_last_ogg_native_consumed() const { return last_ogg_native_consumed_; }
     uint8_t get_last_ogg_is_end_of_packet() const { return last_ogg_is_end_of_packet_; }
     size_t  get_ogg_stash_len() const { return ogg_stash_.size(); }
@@ -427,6 +427,12 @@ public:
     uint8_t get_last_ogg_dbg_seg_count() const { return last_ogg_dbg_seg_count_; }
     size_t get_last_ogg_dbg_buf_cap() const { return last_ogg_dbg_buf_cap_; }
     size_t get_last_ogg_dbg_buf_peak() const { return last_ogg_dbg_buf_peak_; }
+
+    // Log74: what bytes are we feeding into decode_native after Ogg demux?
+    bool    get_last_ogg_body_prefix_valid() const { return last_ogg_body_prefix_valid_; }
+    uint8_t get_last_ogg_body_prefix(uint8_t i) const { return (i < 8) ? last_ogg_body_prefix_[i] : 0; }
+    size_t  get_last_ogg_bytes_consumed() const { return last_ogg_bytes_consumed_dbg_; }
+    uint8_t get_last_ogg_endpkt() const { return last_ogg_endpkt_dbg_; }
 
 private:
     // ========================================
@@ -729,6 +735,13 @@ private:
     uint8_t last_ogg_dbg_seg_count_ = 0;
     size_t last_ogg_dbg_buf_cap_ = 0;
     size_t last_ogg_dbg_buf_peak_ = 0;
+
+    // Log74: last offered ogg body prefix (first 8 bytes) + lengths
+    uint8_t last_ogg_body_prefix_[8]{};
+    bool    last_ogg_body_prefix_valid_{false};
+    size_t  last_ogg_body_len_dbg_{0};
+    size_t  last_ogg_bytes_consumed_dbg_{0};
+    uint8_t last_ogg_endpkt_dbg_{0};
 
     // Metadata storage
     std::unique_ptr<std::vector<FLACMetadataBlock>> metadata_blocks_;

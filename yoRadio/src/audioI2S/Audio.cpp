@@ -6172,6 +6172,21 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                                     (unsigned)g_mf.get_last_ogg_dbg_buf_cap(),
                                     (unsigned)g_mf.get_last_ogg_dbg_buf_peak()
                                 );
+                                if (g_mf.get_last_ogg_body_prefix_valid()) {
+                                    AUDIO_INFO("microflac OGG_BODY len=%u cons=%u endpkt=%u prefix=%02X%02X%02X%02X %02X%02X%02X%02X",
+                                        (unsigned)g_mf.get_last_ogg_body_len(),
+                                        (unsigned)g_mf.get_last_ogg_bytes_consumed(),
+                                        (unsigned)g_mf.get_last_ogg_endpkt(),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(0),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(1),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(2),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(3),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(4),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(5),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(6),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(7)
+                                    );
+                                }
                             }
                         }
                         // If we consumed bytes and still have input left in this same window,

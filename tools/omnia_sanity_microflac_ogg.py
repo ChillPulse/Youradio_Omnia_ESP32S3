@@ -45,5 +45,15 @@ for n in ["get_last_ogg_dbg_state", "get_last_ogg_dbg_assembling", "get_last_ogg
         print(f"FAIL: missing {n}() in flac_decoder.h")
         sys.exit(2)
 
+for n in ["get_last_ogg_body_prefix_valid", "get_last_ogg_body_len", "last_ogg_body_prefix_"]:
+    if n not in ht:
+        print(f"FAIL: missing {n} in flac_decoder.h")
+        sys.exit(2)
+
+ogg_h = Path("yoRadio/src/audioI2S/micro_flac/micro_ogg/ogg_demuxer.h").read_text(encoding="utf-8", errors="replace")
+if "peak_buffer_capacity_{0}" not in ogg_h:
+    print("FAIL: missing peak_buffer_capacity_{0} in ogg_demuxer.h")
+    sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)

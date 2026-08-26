@@ -637,6 +637,19 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         const uint8_t* body = state.packet.data;
         size_t body_len = state.packet.length;
 
+        // Log74 DIAG: snapshot what demuxer is offering (before any BOS stripping)
+        this->last_ogg_body_len_dbg_ = body_len;
+        this->last_ogg_bytes_consumed_dbg_ = state.bytes_consumed;
+        this->last_ogg_endpkt_dbg_ = state.packet.is_end_of_packet ? 1 : 0;
+
+        this->last_ogg_body_prefix_valid_ = false;
+        if (body && body_len > 0) {
+            const size_t n = (body_len >= 8) ? 8 : body_len;
+            for (size_t i = 0; i < n; i++) this->last_ogg_body_prefix_[i] = body[i];
+            for (size_t i = n; i < 8; i++) this->last_ogg_body_prefix_[i] = 0;
+            this->last_ogg_body_prefix_valid_ = true;
+        }
+
         if (body_len == 0) {
             if (bytes_consumed < input_len) {
                 continue;

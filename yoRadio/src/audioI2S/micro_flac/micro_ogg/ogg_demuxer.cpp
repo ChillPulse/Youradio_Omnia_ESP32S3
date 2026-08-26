@@ -192,6 +192,7 @@ void OggDemuxer::reset() {
 #ifdef MICRO_OGG_DEMUXER_DEBUG
     zero_copy_packets_ = 0;
     buffered_packets_ = 0;
+    peak_buffer_capacity_ = internal_buffer_capacity_; // 0 if not allocated
 #endif
 }
 

@@ -482,9 +482,9 @@ private:
 
 #ifdef MICRO_OGG_DEMUXER_DEBUG
     // Statistics (only enabled with MICRO_OGG_DEMUXER_DEBUG)
-    size_t zero_copy_packets_;     // Number of packets returned via zero-copy
-    size_t buffered_packets_;      // Number of packets that required buffering
-    size_t peak_buffer_capacity_;  // Peak internal buffer capacity reached
+    size_t zero_copy_packets_{0};
+    size_t buffered_packets_{0};
+    size_t peak_buffer_capacity_{0};
 #endif
 };
 
