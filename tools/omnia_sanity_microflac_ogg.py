@@ -55,5 +55,10 @@ if "peak_buffer_capacity_{0}" not in ogg_h:
     print("FAIL: missing peak_buffer_capacity_{0} in ogg_demuxer.h")
     sys.exit(2)
 
+for n in ["get_last_chunk_prefix_valid", "last_chunk_prefix_", "get_last_ogg_res", "last_ogg_res_dbg_"]:
+    if n not in ht:
+        print(f"FAIL: missing {n} in flac_decoder.h")
+        sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)

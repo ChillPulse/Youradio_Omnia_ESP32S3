@@ -548,6 +548,14 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         }
         bytes_consumed += state.bytes_consumed;
 
+        // Snapshot last demux result (for Log76)
+        this->last_ogg_res_dbg_ = (int8_t)state.result;
+        this->last_ogg_bytes_consumed_dbg_ = (uint16_t)state.bytes_consumed;
+        this->last_ogg_packet_len_dbg_ = (uint16_t)state.packet.length;
+        this->last_ogg_packet_endpkt_dbg_ = state.packet.is_end_of_packet ? 1 : 0;
+        this->last_ogg_packet_bos_dbg_ = state.packet.is_bos ? 1 : 0;
+        this->last_ogg_packet_eos_dbg_ = state.packet.is_eos ? 1 : 0;
+
 #ifdef MICRO_OGG_DEMUXER_DEBUG
         int dbg_state = 0;
         bool dbg_assembling = false;
@@ -691,6 +699,17 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
 
             const uint8_t* chunk = body + off;
             size_t chunk_len = body_len - off;
+
+            // Snapshot real chunk passed into decode_native (after BOS stripping + off)
+            this->last_chunk_len_ = chunk_len;
+            this->last_chunk_off_ = off;
+            this->last_chunk_prefix_valid_ = false;
+            if (chunk && chunk_len > 0) {
+                size_t n = (chunk_len >= 8) ? 8 : chunk_len;
+                for (size_t i = 0; i < n; i++) this->last_chunk_prefix_[i] = chunk[i];
+                for (size_t i = n; i < 8; i++) this->last_chunk_prefix_[i] = 0;
+                this->last_chunk_prefix_valid_ = true;
+            }
 
             auto result = this->decode_native(chunk, chunk_len, output,
                                               native_consumed, native_samples, output_32bit);

@@ -434,6 +434,19 @@ public:
     size_t  get_last_ogg_bytes_consumed() const { return last_ogg_bytes_consumed_dbg_; }
     uint8_t get_last_ogg_endpkt() const { return last_ogg_endpkt_dbg_; }
 
+    // What chunk is actually fed into decode_native() in Ogg path (after BOS strip, with off)
+    bool    get_last_chunk_prefix_valid() const { return last_chunk_prefix_valid_; }
+    uint8_t get_last_chunk_prefix(uint8_t i) const { return (i < 8) ? last_chunk_prefix_[i] : 0; }
+    size_t  get_last_chunk_len() const { return last_chunk_len_; }
+    size_t  get_last_chunk_off() const { return last_chunk_off_; }
+
+    // Ogg state snapshot for the last get_next_data() call
+    int8_t   get_last_ogg_res() const { return last_ogg_res_dbg_; }
+    uint16_t get_last_ogg_packet_len() const { return last_ogg_packet_len_dbg_; }
+    uint8_t  get_last_ogg_packet_endpkt() const { return last_ogg_packet_endpkt_dbg_; }
+    uint8_t  get_last_ogg_packet_bos() const { return last_ogg_packet_bos_dbg_; }
+    uint8_t  get_last_ogg_packet_eos() const { return last_ogg_packet_eos_dbg_; }
+
 private:
     // ========================================
     // Private Types
@@ -742,6 +755,19 @@ private:
     size_t  last_ogg_body_len_dbg_{0};
     size_t  last_ogg_bytes_consumed_dbg_{0};
     uint8_t last_ogg_endpkt_dbg_{0};
+
+    // last chunk fed into decode_native() from Ogg path
+    uint8_t last_chunk_prefix_[8]{};
+    bool    last_chunk_prefix_valid_{false};
+    size_t  last_chunk_len_{0};
+    size_t  last_chunk_off_{0};
+
+    // last demux snapshot
+    int8_t   last_ogg_res_dbg_{0};
+    uint16_t last_ogg_packet_len_dbg_{0};
+    uint8_t  last_ogg_packet_endpkt_dbg_{0};
+    uint8_t  last_ogg_packet_bos_dbg_{0};
+    uint8_t  last_ogg_packet_eos_dbg_{0};
 
     // Metadata storage
     std::unique_ptr<std::vector<FLACMetadataBlock>> metadata_blocks_;

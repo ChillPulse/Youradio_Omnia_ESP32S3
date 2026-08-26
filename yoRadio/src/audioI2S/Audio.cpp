@@ -6187,6 +6187,29 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                                         (unsigned)g_mf.get_last_ogg_body_prefix(7)
                                     );
                                 }
+                                AUDIO_INFO("microflac OGG_STATE res=%d(%s) demuxCons=%u pktLen=%u endpkt=%u bos=%u eos=%u",
+                                    (int)g_mf.get_last_ogg_res(), oggDemuxName((int)g_mf.get_last_ogg_res()),
+                                    (unsigned)g_mf.get_last_ogg_bytes_consumed(),
+                                    (unsigned)g_mf.get_last_ogg_packet_len(),
+                                    (unsigned)g_mf.get_last_ogg_packet_endpkt(),
+                                    (unsigned)g_mf.get_last_ogg_packet_bos(),
+                                    (unsigned)g_mf.get_last_ogg_packet_eos()
+                                );
+
+                                if (g_mf.get_last_chunk_prefix_valid()) {
+                                    AUDIO_INFO("microflac CHUNK off=%u len=%u prefix=%02X%02X%02X%02X %02X%02X%02X%02X",
+                                        (unsigned)g_mf.get_last_chunk_off(),
+                                        (unsigned)g_mf.get_last_chunk_len(),
+                                        (unsigned)g_mf.get_last_chunk_prefix(0),
+                                        (unsigned)g_mf.get_last_chunk_prefix(1),
+                                        (unsigned)g_mf.get_last_chunk_prefix(2),
+                                        (unsigned)g_mf.get_last_chunk_prefix(3),
+                                        (unsigned)g_mf.get_last_chunk_prefix(4),
+                                        (unsigned)g_mf.get_last_chunk_prefix(5),
+                                        (unsigned)g_mf.get_last_chunk_prefix(6),
+                                        (unsigned)g_mf.get_last_chunk_prefix(7)
+                                    );
+                                }
                             }
                         }
                         // If we consumed bytes and still have input left in this same window,
