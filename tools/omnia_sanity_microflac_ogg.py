@@ -81,5 +81,13 @@ for n in ["get_last_chunk_prefix_valid", "last_chunk_prefix_", "get_last_ogg_res
         print(f"FAIL: missing {n} in flac_decoder.h")
         sys.exit(2)
 
+if "(k == 0 ? 1 : k)" in txt:
+    print("FAIL: flac_decoder.cpp still contains '(k == 0 ? 1 : k)' (destroys OggS capture)")
+    sys.exit(2)
+
+if "bytes_consumed = 1;  // anti-stuck: guarantee window advance" in txt:
+    print("FAIL: flac_decoder.cpp still forces bytes_consumed=1 on OGG_NEED_MORE_DATA (sync break risk)")
+    sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)

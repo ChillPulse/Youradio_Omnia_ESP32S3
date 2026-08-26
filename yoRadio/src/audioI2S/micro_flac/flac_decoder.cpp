@@ -603,27 +603,13 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             if (this->ogg_eos_seen_) {
                 return FLAC_DECODER_END_OF_STREAM;
             }
-            // OMNIA-PATCH Log59 (3.4): anti zero-consume. If input remains but the demuxer
-            // did not eat anything, this is NOT "need more": one-shot resync to the next
-            // OggS (skip >= 1 byte), else force 1-byte progress so the outer window advances.
-            if (state.bytes_consumed == 0 && remaining > 0) {
-                const uint8_t* p = input + bytes_consumed;
-                size_t k = 1;  // skip at least 1 byte to avoid re-parsing the same position
-                for (; k + 3 < remaining; k++) {
-                    if (p[k] == 'O' && p[k + 1] == 'g' && p[k + 2] == 'g' && p[k + 3] == 'S') break;
-                }
-                if (k + 3 < remaining) {
-                    this->ogg_demuxer_->reset();
-                    bytes_consumed += k;
-                    continue;
-                }
-                if (bytes_consumed == 0) {
-                    bytes_consumed = 1;  // anti-stuck: guarantee window advance
-                }
+            // IMPORTANT: do NOT force-consume bytes when the demuxer consumed nothing.
+            // Returning NEED_MORE with bytes_consumed unchanged preserves sync at page boundaries.
+            if (state.bytes_consumed == 0) {
                 return FLAC_DECODER_NEED_MORE_DATA;
             }
             if (bytes_consumed < input_len) {
-                continue;  // More input available; e.g., next page header after page finalization
+                continue;
             }
             return FLAC_DECODER_NEED_MORE_DATA;
         }
@@ -634,21 +620,25 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             // the next OggS and report a soft NEED_MORE. set_fatal_error remains ONLY for
             // the pre-HEADER path (container detect / BOS / header parse).
             if (this->decode_phase_ == DecodePhase::AUDIO) {
+                // Soft recovery: reset demuxer and resync to the next "OggS".
+                // CRITICAL: if "OggS" is at k==0, do NOT skip 1 byte (that destroys the capture pattern).
                 this->ogg_demuxer_->reset();
-                if (bytes_consumed < input_len) {
-                    const uint8_t* p = input + bytes_consumed;
-                    size_t r = input_len - bytes_consumed;
-                    size_t k = 0;
-                    for (; k + 3 < r; k++) {
-                        if (p[k] == 'O' && p[k + 1] == 'g' && p[k + 2] == 'g' && p[k + 3] == 'S') break;
-                    }
-                    if (k + 3 < r) {
-                        bytes_consumed += (k == 0 ? 1 : k);  // always move forward
-                        continue;
-                    }
+
+                const uint8_t* p = input + bytes_consumed;
+                size_t r = input_len - bytes_consumed;
+
+                size_t k = 0;
+                for (; k + 3 < r; k++) {
+                    if (p[k] == 'O' && p[k + 1] == 'g' && p[k + 2] == 'g' && p[k + 3] == 'S') break;
                 }
-                if (bytes_consumed == 0 && input_len > 0) {
-                    bytes_consumed = 1;  // anti-stuck
+                if (k + 3 < r) {
+                    bytes_consumed += k;   // NOTE: may be 0 (valid!)
+                    continue;
+                }
+
+                // No full "OggS" found in this window: keep last 3 bytes for boundary match.
+                if (input_len > 3 && bytes_consumed < input_len - 3) {
+                    bytes_consumed = input_len - 3;
                 }
                 return FLAC_DECODER_NEED_MORE_DATA;
             }
