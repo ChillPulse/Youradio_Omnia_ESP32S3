@@ -30,22 +30,19 @@ for n in [
         print(f"FAIL: missing '{n}' assignment in flac_decoder.cpp")
         sys.exit(2)
 
+# No duplicate demux snapshot block (prevents unsafe packet field reads when result != OGG_OK)
+if txt.count("Log75/76: snapshot last demux result ALWAYS") != 1:
+    print("FAIL: expected exactly 1 'snapshot last demux result ALWAYS' block in flac_decoder.cpp")
+    sys.exit(2)
+
+if "Snapshot last demux result (for Log76)" in txt:
+    print("FAIL: duplicate demux snapshot block marker still present in flac_decoder.cpp")
+    sys.exit(2)
+
 # Must update end_of_packet tracking (from ogg demux state)
 if "is_end_of_packet" not in txt:
     print("FAIL: missing 'is_end_of_packet' usage in flac_decoder.cpp")
     sys.exit(2)
-
-# Must actually WRITE chunk/demux snapshots in flac_decoder.cpp (not only declare in .h)
-for n in [
-    "this->last_chunk_len_ =",
-    "this->last_chunk_off_ =",
-    "this->last_chunk_prefix_valid_ =",
-    "this->last_ogg_res_dbg_ =",
-    "this->last_ogg_packet_len_dbg_ =",
-]:
-    if n not in txt:
-        print(f"FAIL: missing '{n}' assignment in flac_decoder.cpp")
-        sys.exit(2)
 
 # Public getter must exist (already added earlier, but enforce)
 if "get_ogg_stash_len" not in ht:

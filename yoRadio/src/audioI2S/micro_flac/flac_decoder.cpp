@@ -574,14 +574,6 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         }
         bytes_consumed += state.bytes_consumed;
 
-        // Snapshot last demux result (for Log76)
-        this->last_ogg_res_dbg_ = (int8_t)state.result;
-        this->last_ogg_bytes_consumed_dbg_ = (uint16_t)state.bytes_consumed;
-        this->last_ogg_packet_len_dbg_ = (uint16_t)state.packet.length;
-        this->last_ogg_packet_endpkt_dbg_ = state.packet.is_end_of_packet ? 1 : 0;
-        this->last_ogg_packet_bos_dbg_ = state.packet.is_bos ? 1 : 0;
-        this->last_ogg_packet_eos_dbg_ = state.packet.is_eos ? 1 : 0;
-
 #ifdef MICRO_OGG_DEMUXER_DEBUG
         int dbg_state = 0;
         bool dbg_assembling = false;
