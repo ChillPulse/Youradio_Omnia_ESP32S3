@@ -726,7 +726,7 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             const uint8_t* chunk = body + off;
             size_t chunk_len = body_len - off;
 
-            // Snapshot real chunk passed into decode_native (after BOS stripping + off)
+            // Log75/76: snapshot chunk fed into decode_native() (packet slicing path)
             this->last_chunk_len_ = chunk_len;
             this->last_chunk_off_ = off;
             this->last_chunk_prefix_valid_ = false;
