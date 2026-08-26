@@ -518,6 +518,17 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             size_t native_consumed = 0;
             size_t native_samples  = 0;
 
+            // Log75/76: snapshot chunk fed into decode_native() (stash path)
+            this->last_chunk_len_ = s_len;
+            this->last_chunk_off_ = 0;
+            this->last_chunk_prefix_valid_ = false;
+            if (s && s_len > 0) {
+                const size_t n = (s_len >= 8) ? 8 : s_len;
+                for (size_t i = 0; i < n; i++) this->last_chunk_prefix_[i] = s[i];
+                for (size_t i = n; i < 8; i++) this->last_chunk_prefix_[i] = 0;
+                this->last_chunk_prefix_valid_ = true;
+            }
+
             auto r = this->decode_native(s, s_len, output, native_consumed, native_samples, output_32bit);
             samples_decoded = native_samples;
 
@@ -538,6 +549,21 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
         }
 
         auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
+        // Log75/76: snapshot last demux result ALWAYS (even when not OGG_OK)
+        this->last_ogg_res_dbg_ = (int8_t)state.result;
+        this->last_ogg_bytes_consumed_dbg_ = (uint16_t)state.bytes_consumed;
+
+        if (state.result == micro_ogg::OGG_OK) {
+            this->last_ogg_packet_len_dbg_ = (uint16_t)state.packet.length;
+            this->last_ogg_packet_endpkt_dbg_ = state.packet.is_end_of_packet ? 1 : 0;
+            this->last_ogg_packet_bos_dbg_ = state.packet.is_bos ? 1 : 0;
+            this->last_ogg_packet_eos_dbg_ = state.packet.is_eos ? 1 : 0;
+        } else {
+            this->last_ogg_packet_len_dbg_ = 0;
+            this->last_ogg_packet_endpkt_dbg_ = 0;
+            this->last_ogg_packet_bos_dbg_ = 0;
+            this->last_ogg_packet_eos_dbg_ = 0;
+        }
         this->last_ogg_result_ = (int8_t)state.result;
         if (this->ogg_demuxer_->has_last_header()) {
             auto h = this->ogg_demuxer_->get_last_header();

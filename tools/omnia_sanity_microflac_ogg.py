@@ -23,6 +23,18 @@ if "is_end_of_packet" not in txt:
     print("FAIL: missing 'is_end_of_packet' usage in flac_decoder.cpp")
     sys.exit(2)
 
+# Must actually WRITE chunk/demux snapshots in flac_decoder.cpp (not only declare in .h)
+for n in [
+    "this->last_chunk_len_ =",
+    "this->last_chunk_off_ =",
+    "this->last_chunk_prefix_valid_ =",
+    "this->last_ogg_res_dbg_ =",
+    "this->last_ogg_packet_len_dbg_ =",
+]:
+    if n not in txt:
+        print(f"FAIL: missing '{n}' assignment in flac_decoder.cpp")
+        sys.exit(2)
+
 # Public getter must exist (already added earlier, but enforce)
 if "get_ogg_stash_len" not in ht:
     print("FAIL: missing get_ogg_stash_len() in flac_decoder.h")
