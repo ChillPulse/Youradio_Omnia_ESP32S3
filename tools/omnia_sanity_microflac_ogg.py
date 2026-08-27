@@ -132,5 +132,20 @@ if "config_.relaxed_stream_checks" not in ogg_cpp:
     print("FAIL: missing config_.relaxed_stream_checks in ogg_demuxer.cpp")
     sys.exit(2)
 
+if "shrink_to_fit" in txt:
+    print("FAIL: flac_decoder.cpp still contains shrink_to_fit() (heap/psram churn risk)")
+    sys.exit(2)
+
+a35 = Path("yoRadio/src/audioI2S/Audio.cpp").read_text(encoding="utf-8", errors="replace")
+if "OMNIA_DEBUG_MICROFLAC" not in a35:
+    print("FAIL: missing OMNIA_DEBUG_MICROFLAC definition in Audio.cpp")
+    sys.exit(2)
+if "#if OMNIA_DEBUG_MICROFLAC" not in a35:
+    print("FAIL: missing OMNIA_DEBUG_MICROFLAC gating blocks in Audio.cpp")
+    sys.exit(2)
+if "FLAC_DECODER_ERROR_OGG_DEMUX" not in a35 or "FLAC_DECODER_ERROR_OGG_BAD_HEADER" not in a35:
+    print("FAIL: missing restricted reset condition markers (-14/-15) in Audio.cpp")
+    sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)

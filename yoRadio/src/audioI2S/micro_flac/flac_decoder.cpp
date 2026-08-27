@@ -188,8 +188,7 @@ void FLACDecoder::reset() {
     this->last_ogg_body_len_ = 0;
     this->last_ogg_native_consumed_ = 0;
     this->last_ogg_is_end_of_packet_ = 0;
-    this->ogg_stash_.clear();
-    this->ogg_stash_.shrink_to_fit(); // допустимо, но можно просто clear()
+    this->ogg_stash_.clear(); // keep capacity; avoids heap/PSRAM churn on embedded
 #endif
 
     // Reset stream info (new stream may have different parameters)

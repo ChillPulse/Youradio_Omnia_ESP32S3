@@ -46,6 +46,17 @@ constexpr uint8_t   MF_WEB_ZERO_CONSUME_LIMIT = 80;      // cycles with bytes_co
 constexpr uint8_t   MF_WEB_ERR_SOFT_LIMIT = 24;          // soft errors per window before reconnect (not 31/1s!)
 constexpr uint32_t  MF_WEB_SOFT_WINDOW_MS = 10000;       // soft-error counting window
 
+// =============================================================
+// Flagship logging control (release must be quiet; debug can be verbose)
+// =============================================================
+#ifndef OMNIA_DEBUG_MICROFLAC
+  #if defined(DEBUG)
+    #define OMNIA_DEBUG_MICROFLAC 1
+  #else
+    #define OMNIA_DEBUG_MICROFLAC 0
+  #endif
+#endif
+
 // Log59: humanize micro-flac error codes for diagnostics
 static const char* mfErrName(int e){
     switch(e){
@@ -4322,10 +4333,22 @@ void Audio::processWebStream() {
     // start audio decoding - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     // Rec46 C: soft prebuffer for OGG/Opus/Vorbis to avoid early stutter, configurable via myoptions.h
 #ifndef OMNIA_OGG_PREBUFFER
-    const uint32_t PREBUFFER = 24000; // ~1.5s at 128kbps
+    uint32_t PREBUFFER = 24000; // fallback
 #else
-    const uint32_t PREBUFFER = OMNIA_OGG_PREBUFFER;
+    uint32_t PREBUFFER = OMNIA_OGG_PREBUFFER;
 #endif
+
+// Flagship: FLAC needs a larger jitter buffer (PC players buffer more than ~0.3s).
+// Use ~1 second worth of bytes when bitrate is known, with sane clamps.
+if (m_codec == CODEC_FLAC) {
+    uint32_t one_sec = 200000; // default floor ~200KB
+    if (m_nominal_bitrate > 0) {
+        one_sec = (uint32_t)(m_nominal_bitrate / 8); // bits/s -> bytes/s
+        if (one_sec < 200000) one_sec = 200000;
+        if (one_sec > 500000) one_sec = 500000;
+    }
+    if (PREBUFFER < one_sec) PREBUFFER = one_sec;
+}
     // early init decoder as soon as we have enough to detect codec (OGG case)
     if(!m_f_stream && InBuff.bufferFilled() > m_pwst.maxFrameSize) {
         if(m_codec == CODEC_OGG) {
@@ -6045,11 +6068,13 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                             static uint32_t s_adoptMs = 0;
                             if (millis() - s_adoptMs > 700) {
                                 s_adoptMs = millis();
+#if OMNIA_DEBUG_MICROFLAC
                                 AUDIO_INFO("microflac adopt demux_cons=%u (left=%u) ogg_res=%d(%s) pktLen=%u endpkt=%u",
                                            (unsigned)demux_cons, (unsigned)left,
                                            (int)g_mf.get_last_ogg_res(), oggDemuxName((int)g_mf.get_last_ogg_res()),
                                            (unsigned)g_mf.get_last_ogg_packet_len(),
                                            (unsigned)g_mf.get_last_ogg_packet_endpkt());
+#endif
                             }
                         }
                     }
@@ -6242,6 +6267,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                             static uint32_t s_needMoreProgMs = 0;
                             if(millis() - s_needMoreProgMs > 700){
                                 s_needMoreProgMs = millis();
+#if OMNIA_DEBUG_MICROFLAC
                                 AUDIO_INFO("microflac NEED_MORE(progress) cons=%u total_cons=%u left=%u filled=%u header=%u",
                                            (unsigned)bytes_consumed, (unsigned)total_consumed, (unsigned)left,
                                            (unsigned)InBuff.bufferFilled(), (unsigned)m_mf_header_ready);
@@ -6400,7 +6426,10 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                         return 0; // CRITICAL: never continue after reconnect
                     }
 
-                    if(bytes_consumed == 0 && (int8_t)mf_res == m_mf_prevErr){
+                    if(bytes_consumed == 0 && (int8_t)mf_res == m_mf_prevErr &&
+                       ((int)mf_res == micro_flac::FLAC_DECODER_ERROR_OGG_DEMUX ||
+                        (int)mf_res == micro_flac::FLAC_DECODER_ERROR_OGG_BAD_HEADER ||
+                        (int)mf_res == micro_flac::FLAC_DECODER_ERROR_INPUT_INVALID)){
                         // latched error: decoder returns the same error with zero consume ->
                         // full soft re-lock (NEVER loop on the same -14 without a reset)
                         AUDIO_ERROR("microflac latched err %d -> soft re-lock (g_mf.reset)", (int)mf_res);
