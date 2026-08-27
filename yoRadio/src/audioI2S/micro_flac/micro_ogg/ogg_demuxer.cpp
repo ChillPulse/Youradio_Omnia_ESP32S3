@@ -715,45 +715,71 @@ OggDemuxer::InternalResult OggDemuxer::accumulate_header(const uint8_t* input, s
 }
 
 bool OggDemuxer::validate_stream_consistency(OggDemuxState& state) {
-    // RFC 3533 validation - page sequence
+    bool is_first_page = !stream_initialized_;
+
+    // ---- Initialize or restart stream ----
     if (!stream_initialized_) {
+        // Strict: require BOS on the first page
         if (!(current_page_.header_type & OGG_BEGINNING_OF_STREAM)) {
-            state.result = OGG_STREAM_BOS_ERROR;
-            return false;
+            if (!config_.relaxed_stream_checks) {
+                state.result = OGG_STREAM_BOS_ERROR;
+                return false;
+            }
+            // Relaxed: accept mid-stream start (no BOS)
         }
         stream_serial_ = current_page_.stream_serial;
         expected_page_sequence_ = current_page_.page_sequence;
         stream_initialized_ = true;
+        // Treat as first page for continuation checks
+        is_first_page = true;
     } else {
-        // RFC 3533: BOS flag can only appear on the first page
+        // BOS flag after initialization is normally illegal; in relaxed mode treat as restart.
         if (current_page_.header_type & OGG_BEGINNING_OF_STREAM) {
-            state.result = OGG_STREAM_BOS_ERROR;
-            return false;
-        }
-        if (current_page_.stream_serial != stream_serial_) {
-            state.result = OGG_STREAM_SERIAL_MISMATCH;
-            return false;
-        }
-        if (current_page_.page_sequence != expected_page_sequence_) {
-            state.result = OGG_STREAM_SEQUENCE_ERROR;
-            return false;
+            if (!config_.relaxed_stream_checks) {
+                state.result = OGG_STREAM_BOS_ERROR;
+                return false;
+            }
+            // Restart stream on BOS violation
+            stream_serial_ = current_page_.stream_serial;
+            expected_page_sequence_ = current_page_.page_sequence;
+            previous_page_ended_with_continued_packet_ = false;
+            bos_flag_used_ = false;
+            is_first_page = true;
+        } else if (current_page_.stream_serial != stream_serial_) {
+            if (!config_.relaxed_stream_checks) {
+                state.result = OGG_STREAM_SERIAL_MISMATCH;
+                return false;
+            }
+            // Restart on concatenated stream
+            stream_serial_ = current_page_.stream_serial;
+            expected_page_sequence_ = current_page_.page_sequence;
+            previous_page_ended_with_continued_packet_ = false;
+            bos_flag_used_ = false;
+            is_first_page = true;
+        } else if (current_page_.page_sequence != expected_page_sequence_) {
+            if (!config_.relaxed_stream_checks) {
+                state.result = OGG_STREAM_SEQUENCE_ERROR;
+                return false;
+            }
+            // Restart on sequence mismatch
+            expected_page_sequence_ = current_page_.page_sequence;
+            previous_page_ended_with_continued_packet_ = false;
+            bos_flag_used_ = false;
+            is_first_page = true;
         }
     }
+
     expected_page_sequence_++;
 
-    // RFC 3533 Section 6: Validate continued packet flag consistency
-    // A page with the continued flag set must follow a page whose last segment was 255
-    // (indicating the packet continues). Skip the first page (BOS) since there's no previous.
+    // ---- Continued flag consistency ----
     bool has_continued_flag = (current_page_.header_type & OGG_CONTINUED_PACKET) != 0;
-    if (current_page_.page_sequence > 0 &&
-        has_continued_flag != previous_page_ended_with_continued_packet_) {
+    if (!is_first_page && has_continued_flag != previous_page_ended_with_continued_packet_) {
         state.result = OGG_STREAM_CONTINUATION_ERROR;
         return false;
     }
 
-    // RFC 3533 validation - EOS flag with continued packet
-    if ((current_page_.header_type & OGG_END_OF_STREAM) &&
-        current_page_ends_with_continued_packet()) {
+    // ---- EOS flag consistency ----
+    if ((current_page_.header_type & OGG_END_OF_STREAM) && current_page_ends_with_continued_packet()) {
         state.result = OGG_STREAM_EOS_ERROR;
         return false;
     }
@@ -889,6 +915,11 @@ OggDemuxer::InternalResult OggDemuxer::handle_page_header(const uint8_t* input, 
 
     // Validate stream consistency (BOS, serial, sequence, EOS)
     if (!validate_stream_consistency(state)) {
+        // IMPORTANT: on stream-consistency errors we already parsed the header,
+        // so we must report header bytes consumed; otherwise caller can get stuck at bytes_consumed==0.
+        state.bytes_consumed = (bytes_added_to_staging > 0) ? bytes_added_to_staging : header_size;
+        page_header_staging_size_ = 0;
+        state_ = STATE_EXPECT_PAGE_HEADER;
         return InternalResult::PACKET_READY;
     }
 

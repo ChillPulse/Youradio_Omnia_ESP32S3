@@ -109,5 +109,17 @@ if "microflac CHUNK(zero)" not in a:
     print("FAIL: missing 'microflac CHUNK(zero)' in Audio.cpp")
     sys.exit(2)
 
+ogg_h2 = Path("yoRadio/src/audioI2S/micro_flac/micro_ogg/ogg_demuxer.h").read_text(encoding="utf-8", errors="replace")
+if "relaxed_stream_checks" not in ogg_h2:
+    print("FAIL: missing relaxed_stream_checks in ogg_demuxer.h")
+    sys.exit(2)
+if "cfg.relaxed_stream_checks = true;" not in txt:
+    print("FAIL: missing cfg.relaxed_stream_checks = true; in flac_decoder.cpp")
+    sys.exit(2)
+ogg_cpp = Path("yoRadio/src/audioI2S/micro_flac/micro_ogg/ogg_demuxer.cpp").read_text(encoding="utf-8", errors="replace")
+if "config_.relaxed_stream_checks" not in ogg_cpp:
+    print("FAIL: missing config_.relaxed_stream_checks in ogg_demuxer.cpp")
+    sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)

@@ -282,6 +282,7 @@ FLACDecoderResult FLACDecoder::decode_impl(const uint8_t* input, size_t input_le
             cfg.min_buffer_size = 16384;
             cfg.max_buffer_size = 4 * 1024 * 1024; // 4MB PSRAM (ESP32-S3-N16R8 has 8MB PSRAM)
             cfg.enable_crc = false;
+            cfg.relaxed_stream_checks = true;
 #if defined(ESP_PLATFORM) || defined(ARDUINO_ARCH_ESP32)
             cfg.alloc = ogg_psram_alloc;
             cfg.realloc = ogg_psram_realloc;

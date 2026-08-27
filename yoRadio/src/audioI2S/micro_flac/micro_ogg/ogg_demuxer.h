@@ -125,6 +125,9 @@ struct OggDemuxerConfig {
     size_t min_buffer_size = 1024;
     size_t max_buffer_size = 8192;  // Conservative default
     bool enable_crc = false;
+    // Relaxed stream checks for live radio:
+    // allow starting mid-stream (no BOS on first seen page) and treat stream errors as soft restarts.
+    bool relaxed_stream_checks = false;
 
     // Memory callbacks - nullptr means use malloc/free/realloc
     void* (*alloc)(size_t size) = nullptr;
