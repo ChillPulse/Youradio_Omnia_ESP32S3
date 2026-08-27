@@ -93,8 +93,19 @@ if "bytes_consumed > 0 && (mf_millis() - t0) > 40" in txt:
     print("FAIL: decode_ogg still uses progress-only time budget (can hang Log78)")
     sys.exit(2)
 
-if "Prevent long byte-by-byte scanning of large packets" not in txt:
-    print("FAIL: missing packet slicing time-budget guard")
+if "get_next_packet(" not in txt:
+    print("FAIL: flac_decoder.cpp must use get_next_packet() in decode_ogg (flagship packet mode)")
+    sys.exit(2)
+if "get_next_data(" in txt:
+    print("FAIL: flac_decoder.cpp still contains get_next_data() (packet mode required)")
+    sys.exit(2)
+
+a_dbg = Path("yoRadio/src/audioI2S/Audio.cpp").read_text(encoding="utf-8", errors="replace")
+if "OMNIA_DEBUG_MICROFLAC" not in a_dbg:
+    print("FAIL: missing OMNIA_DEBUG_MICROFLAC in Audio.cpp")
+    sys.exit(2)
+if "#if OMNIA_DEBUG_MICROFLAC" not in a_dbg:
+    print("FAIL: missing debug gating blocks (#if OMNIA_DEBUG_MICROFLAC) in Audio.cpp")
     sys.exit(2)
 
 # Ensure zero_cons diagnostics + adopt demux consume exist in Audio.cpp

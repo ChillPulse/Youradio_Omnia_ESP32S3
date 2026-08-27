@@ -480,7 +480,7 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
     // Step 1: Feed initial "OggS" detect_buffer to demuxer (once)
     if (this->ogg_bos_prefix_consumed_ == 0 && !this->ogg_bos_processed_) {
         auto state =
-            this->ogg_demuxer_->get_next_data(this->detect_buffer_, this->detect_buffer_len_);
+            this->ogg_demuxer_->get_next_packet(this->detect_buffer_, this->detect_buffer_len_);
         this->detect_buffer_len_ = 0;
         // detect_buffer_fed_ stays false for decode_native reuse
 
@@ -549,7 +549,7 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             }
         }
 
-        auto state = this->ogg_demuxer_->get_next_data(input + bytes_consumed, remaining);
+        auto state = this->ogg_demuxer_->get_next_packet(input + bytes_consumed, remaining);
         // Log75/76: snapshot last demux result ALWAYS (even when not OGG_OK)
         this->last_ogg_res_dbg_ = (int8_t)state.result;
         this->last_ogg_bytes_consumed_dbg_ = (uint16_t)state.bytes_consumed;
@@ -699,103 +699,59 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
             }
         }
 
-        // Step 3: Feed Ogg packet body to decode_native in slices.
-        // IMPORTANT: decode_native may consume only a prefix on errors (e.g. SYNC_NOT_FOUND).
-        // Treating native_consumed != body_len as OGG_DEMUX is wrong and causes false -14 storms (Log71).
-        size_t off = 0;
+        // Step 3 (FLAGSHIP): In Ogg-FLAC, each audio packet should correspond to a single FLAC frame.
+        // Decode the packet as a whole (packet mode), no slicing/scanning.
+        size_t native_consumed = 0;
+        size_t native_samples  = 0;
 
-        while (off < body_len) {
-            // Prevent long byte-by-byte scanning of large packets from blocking the system (Log78).
-            if ((mf_millis() - t0) > 20) {
-                // stash remainder so we don't lose bytes (cap enforced elsewhere)
-                if (off < body_len) {
-                    const size_t rem = body_len - off;
-                    if (this->ogg_stash_.size() + rem <= 131072) {
-                        this->ogg_stash_.insert(this->ogg_stash_.end(), body + off, body + body_len);
-                    } else {
-                        this->ogg_stash_.clear();
-                    }
-                }
-                return FLAC_DECODER_NEED_MORE_DATA;
-            }
+        // Snapshot chunk fed into decode_native() (packet mode)
+        this->last_chunk_len_ = body_len;
+        this->last_chunk_off_ = 0;
+        this->last_chunk_prefix_valid_ = false;
+        if (body && body_len > 0) {
+            const size_t n = (body_len >= 8) ? 8 : body_len;
+            for (size_t i = 0; i < n; i++) this->last_chunk_prefix_[i] = body[i];
+            for (size_t i = n; i < 8; i++) this->last_chunk_prefix_[i] = 0;
+            this->last_chunk_prefix_valid_ = true;
+        }
 
-            size_t native_consumed = 0;
-            size_t native_samples  = 0;
+        auto r = this->decode_native(body, body_len, output, native_consumed, native_samples, output_32bit);
+        samples_decoded = native_samples;
 
-            const uint8_t* chunk = body + off;
-            size_t chunk_len = body_len - off;
+        // diagnostics
+        this->last_ogg_body_len_ = body_len;
+        this->last_ogg_native_consumed_ = native_consumed;
 
-            // Log75/76: snapshot chunk fed into decode_native() (packet slicing path)
-            this->last_chunk_len_ = chunk_len;
-            this->last_chunk_off_ = off;
-            this->last_chunk_prefix_valid_ = false;
-            if (chunk && chunk_len > 0) {
-                size_t n = (chunk_len >= 8) ? 8 : chunk_len;
-                for (size_t i = 0; i < n; i++) this->last_chunk_prefix_[i] = chunk[i];
-                for (size_t i = n; i < 8; i++) this->last_chunk_prefix_[i] = 0;
-                this->last_chunk_prefix_valid_ = true;
-            }
-
-            auto result = this->decode_native(chunk, chunk_len, output,
-                                              native_consumed, native_samples, output_32bit);
-            samples_decoded = native_samples;
-
-            // diagnostics for Audio.cpp OGG_DIAG
-            this->last_ogg_body_len_ = body_len;
-            this->last_ogg_native_consumed_ = off + native_consumed;  // total consumed within this packet so far
-
-            // Guard: must always make progress or explicitly skip, otherwise infinite loop
-            if (native_consumed == 0) {
-                // If decoder can't consume anything, skip 1 byte inside the packet to avoid deadlock.
-                off += 1;
-            } else {
-                off += native_consumed;
-            }
-
-            if (result == FLAC_DECODER_HEADER_READY) {
-                // If there are leftover bytes inside this same packet, stash them for next call
-                if (off < body_len) {
-                    const size_t rem = body_len - off;
-                    if (this->ogg_stash_.size() + rem > 131072) {
-                        this->ogg_stash_.clear();
+        // If decode_native did not consume all offered bytes, stash remainder so we don't lose stream bytes.
+        if (native_consumed < body_len) {
+            const size_t rem = body_len - native_consumed;
+            if (rem > 0) {
+                if (this->ogg_stash_.size() + rem > 131072) { // 128KB cap
+                    this->ogg_stash_.clear();
+                    // In AUDIO phase, treat as soft desync; in HEADER phase this is fatal.
+                    if (this->decode_phase_ != DecodePhase::AUDIO) {
                         return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
                     }
-                    this->ogg_stash_.insert(this->ogg_stash_.end(), body + off, body + body_len);
+                } else {
+                    this->ogg_stash_.insert(this->ogg_stash_.end(), body + native_consumed, body + body_len);
                 }
-                return FLAC_DECODER_HEADER_READY;
-            }
-
-            if (result == FLAC_DECODER_SUCCESS) {
-                // Frame decoded. Stash remainder (may contain next frame start) so we don't lose it.
-                if (off < body_len) {
-                    const size_t rem = body_len - off;
-                    if (this->ogg_stash_.size() + rem > 131072) {
-                        this->ogg_stash_.clear();
-                        return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_DEMUX);
-                    }
-                    this->ogg_stash_.insert(this->ogg_stash_.end(), body + off, body + body_len);
-                }
-                return FLAC_DECODER_SUCCESS;
-            }
-
-            if (result == FLAC_DECODER_NEED_MORE_DATA) {
-                // Need more bytes: exit this packet and continue outer demux loop for next packet/page
-                break;
-            }
-
-            if (result == FLAC_DECODER_END_OF_STREAM) {
-                return FLAC_DECODER_END_OF_STREAM;
-            }
-
-            // Any negative error: keep scanning forward within the same packet.
-            // Do NOT turn this into OGG_DEMUX. decode_native errors are decoder-level issues, not demux.
-            if (result < 0) {
-                continue;
             }
         }
 
-        // Entire packet body consumed/handled, continue with next demuxed data or return NEED_MORE below.
-        continue;
+        if (r == FLAC_DECODER_NEED_MORE_DATA) {
+            // Need more packets; continue loop until budget hits
+            continue;
+        }
+
+        if (r < 0) {
+            // In AUDIO phase, skip bad packet softly to avoid reconnect storms (drops will be shorter).
+            if (this->decode_phase_ == DecodePhase::AUDIO) {
+                continue;
+            }
+            return this->set_fatal_error(r);
+        }
+
+        return r; // SUCCESS / HEADER_READY / END_OF_STREAM
     }
 }
 #endif  // MICRO_FLAC_DISABLE_OGG
