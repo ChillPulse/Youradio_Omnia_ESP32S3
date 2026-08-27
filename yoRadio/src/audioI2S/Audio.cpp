@@ -6032,6 +6032,26 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     }
                     m_mf_lastRes = (int8_t)mf_res;
 
+                    // Log79: if FLAC decoder reports NEED_MORE with zero consumed, but Ogg demuxer snapshot
+                    // indicates it actually consumed bytes, adopt that consumption to advance the input window.
+                    // This prevents re-feeding the same bytes forever (zero_cons storm).
+                    if (mf_res == micro_flac::FLAC_DECODER_NEED_MORE_DATA && bytes_consumed == 0) {
+                        const size_t demux_cons = (size_t)g_mf.get_last_ogg_bytes_consumed();
+                        if (demux_cons > 0 && demux_cons <= left) {
+                            bytes_consumed = demux_cons;
+                            // rate-limited info
+                            static uint32_t s_adoptMs = 0;
+                            if (millis() - s_adoptMs > 700) {
+                                s_adoptMs = millis();
+                                AUDIO_INFO("microflac adopt demux_cons=%u (left=%u) ogg_res=%d(%s) pktLen=%u endpkt=%u",
+                                           (unsigned)demux_cons, (unsigned)left,
+                                           (int)g_mf.get_last_ogg_res(), oggDemuxName((int)g_mf.get_last_ogg_res()),
+                                           (unsigned)g_mf.get_last_ogg_packet_len(),
+                                           (unsigned)g_mf.get_last_ogg_packet_endpkt());
+                            }
+                        }
+                    }
+
                     // progress bookkeeping
                     if(bytes_consumed > 0){
                         p += bytes_consumed;
@@ -6156,6 +6176,60 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                                            (unsigned)left,
                                            (unsigned)(m_mf_out32 != nullptr),
                                            (int)m_mf_lastRes);
+                                // Log79: show demux/chunk state even when bytes_consumed==0 (otherwise we are blind).
+                                AUDIO_INFO("microflac OGG_STATE(zero) res=%d(%s) demuxCons=%u pktLen=%u endpkt=%u bos=%u eos=%u",
+                                    (int)g_mf.get_last_ogg_res(), oggDemuxName((int)g_mf.get_last_ogg_res()),
+                                    (unsigned)g_mf.get_last_ogg_bytes_consumed(),
+                                    (unsigned)g_mf.get_last_ogg_packet_len(),
+                                    (unsigned)g_mf.get_last_ogg_packet_endpkt(),
+                                    (unsigned)g_mf.get_last_ogg_packet_bos(),
+                                    (unsigned)g_mf.get_last_ogg_packet_eos()
+                                );
+
+                                if (g_mf.get_last_chunk_prefix_valid()) {
+                                    AUDIO_INFO("microflac CHUNK(zero) off=%u len=%u prefix=%02X%02X%02X%02X %02X%02X%02X%02X",
+                                        (unsigned)g_mf.get_last_chunk_off(),
+                                        (unsigned)g_mf.get_last_chunk_len(),
+                                        (unsigned)g_mf.get_last_chunk_prefix(0),
+                                        (unsigned)g_mf.get_last_chunk_prefix(1),
+                                        (unsigned)g_mf.get_last_chunk_prefix(2),
+                                        (unsigned)g_mf.get_last_chunk_prefix(3),
+                                        (unsigned)g_mf.get_last_chunk_prefix(4),
+                                        (unsigned)g_mf.get_last_chunk_prefix(5),
+                                        (unsigned)g_mf.get_last_chunk_prefix(6),
+                                        (unsigned)g_mf.get_last_chunk_prefix(7)
+                                    );
+                                }
+
+#ifdef MICRO_OGG_DEMUXER_DEBUG
+                                AUDIO_INFO("microflac OGG_DBG(zero) state=%d assembling=%u skipping=%u pkt=%u bodyCons=%u seg=%u/%u bufCap=%u bufPeak=%u",
+                                    (int)g_mf.get_last_ogg_dbg_state(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_assembling(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_skipping(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_packet_size(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_body_consumed(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_seg_index(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_seg_count(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_buf_cap(),
+                                    (unsigned)g_mf.get_last_ogg_dbg_buf_peak()
+                                );
+#endif
+
+                                if (g_mf.get_last_ogg_body_prefix_valid()) {
+                                    AUDIO_INFO("microflac OGG_BODY(zero) len=%u cons=%u endpkt=%u prefix=%02X%02X%02X%02X %02X%02X%02X%02X",
+                                        (unsigned)g_mf.get_last_ogg_body_len(),
+                                        (unsigned)g_mf.get_last_ogg_bytes_consumed(),
+                                        (unsigned)g_mf.get_last_ogg_endpkt(),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(0),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(1),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(2),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(3),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(4),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(5),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(6),
+                                        (unsigned)g_mf.get_last_ogg_body_prefix(7)
+                                    );
+                                }
                             }
                         }
                         // OMNIA-PATCH Log63: NEED_MORE может быть с прогрессом (bytes_consumed>0), но без PCM.

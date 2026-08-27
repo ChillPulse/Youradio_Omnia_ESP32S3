@@ -97,5 +97,17 @@ if "Prevent long byte-by-byte scanning of large packets" not in txt:
     print("FAIL: missing packet slicing time-budget guard")
     sys.exit(2)
 
+# Ensure zero_cons diagnostics + adopt demux consume exist in Audio.cpp
+a = Path("yoRadio/src/audioI2S/Audio.cpp").read_text(encoding="utf-8", errors="replace")
+if "microflac adopt demux_cons=" not in a:
+    print("FAIL: missing 'microflac adopt demux_cons=' in Audio.cpp")
+    sys.exit(2)
+if "microflac OGG_STATE(zero)" not in a:
+    print("FAIL: missing 'microflac OGG_STATE(zero)' in Audio.cpp")
+    sys.exit(2)
+if "microflac CHUNK(zero)" not in a:
+    print("FAIL: missing 'microflac CHUNK(zero)' in Audio.cpp")
+    sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)
