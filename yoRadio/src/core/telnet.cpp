@@ -7,6 +7,10 @@
 #include "telnet.h"
 #include "omniaplus/cli_extensions.h"
 
+// Runtime microflac debug switch (implemented in Audio.cpp)
+extern void omnia_microflac_set_debug(bool en);
+extern bool omnia_microflac_get_debug();
+
 Telnet telnet;
 
 bool Telnet::_isIPSet(IPAddress ip) {
@@ -183,6 +187,26 @@ void Telnet::info() {
 
 void Telnet::on_input(const char* str, uint8_t clientId) {
   if (strlen(str) == 0) return;
+  // ---- OMNIA: runtime microflac debug via UART/telnet ----
+  // Usage:
+  //   mfdbg            -> status
+  //   mfdbg on|1       -> enable
+  //   mfdbg off|0      -> disable
+  //   mfdbg toggle     -> toggle
+  if (strncmp(str, "mfdbg", 5) == 0) {
+    char arg[16] = {0};
+    bool cur = omnia_microflac_get_debug();
+
+    if (sscanf(str, "mfdbg %15s", arg) == 1) {
+      if (!strcmp(arg, "on") || !strcmp(arg, "1")) cur = true;
+      else if (!strcmp(arg, "off") || !strcmp(arg, "0")) cur = false;
+      else if (!strcmp(arg, "toggle")) cur = !cur;
+    }
+
+    omnia_microflac_set_debug(cur);
+    printf(clientId, "##MFDBG#: %d\n> ", cur ? 1 : 0);
+    return;
+  }
   if(network.status == CONNECTED || network.status == SDREADY){ // OMNIA v8.2 — allow commands also in SDREADY (SD without WiFi)
     if (strcmp(str, "cli.prev") == 0 || strcmp(str, "prev") == 0) {
       player.prev();

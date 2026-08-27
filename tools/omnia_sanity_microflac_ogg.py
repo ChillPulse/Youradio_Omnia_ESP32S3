@@ -101,11 +101,24 @@ if "get_next_data(" in txt:
     sys.exit(2)
 
 a_dbg = Path("yoRadio/src/audioI2S/Audio.cpp").read_text(encoding="utf-8", errors="replace")
-if "OMNIA_DEBUG_MICROFLAC" not in a_dbg:
-    print("FAIL: missing OMNIA_DEBUG_MICROFLAC in Audio.cpp")
+
+# Runtime debug must exist
+if "g_omnia_microflac_debug" not in a_dbg:
+    print("FAIL: missing g_omnia_microflac_debug in Audio.cpp")
     sys.exit(2)
-if "#if OMNIA_DEBUG_MICROFLAC" not in a_dbg:
-    print("FAIL: missing debug gating blocks (#if OMNIA_DEBUG_MICROFLAC) in Audio.cpp")
+if "omnia_microflac_set_debug" not in a_dbg or "omnia_microflac_get_debug" not in a_dbg:
+    print("FAIL: missing omnia_microflac_set_debug/get_debug in Audio.cpp")
+    sys.exit(2)
+
+# No compile-time gating blocks should remain (we need runtime toggle)
+if "#if OMNIA_DEBUG_MICROFLAC" in a_dbg:
+    print("FAIL: Audio.cpp still contains '#if OMNIA_DEBUG_MICROFLAC' blocks; must be runtime-gated")
+    sys.exit(2)
+
+# UART command must exist
+tln = Path("yoRadio/src/core/telnet.cpp").read_text(encoding="utf-8", errors="replace")
+if "mfdbg" not in tln:
+    print("FAIL: missing 'mfdbg' command in telnet.cpp")
     sys.exit(2)
 
 # Ensure zero_cons diagnostics + adopt demux consume exist in Audio.cpp
@@ -139,9 +152,6 @@ if "shrink_to_fit" in txt:
 a35 = Path("yoRadio/src/audioI2S/Audio.cpp").read_text(encoding="utf-8", errors="replace")
 if "OMNIA_DEBUG_MICROFLAC" not in a35:
     print("FAIL: missing OMNIA_DEBUG_MICROFLAC definition in Audio.cpp")
-    sys.exit(2)
-if "#if OMNIA_DEBUG_MICROFLAC" not in a35:
-    print("FAIL: missing OMNIA_DEBUG_MICROFLAC gating blocks in Audio.cpp")
     sys.exit(2)
 if "FLAC_DECODER_ERROR_OGG_DEMUX" not in a35 or "FLAC_DECODER_ERROR_OGG_BAD_HEADER" not in a35:
     print("FAIL: missing restricted reset condition markers (-14/-15) in Audio.cpp")

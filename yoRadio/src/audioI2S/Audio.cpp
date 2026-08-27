@@ -57,6 +57,13 @@ constexpr uint32_t  MF_WEB_SOFT_WINDOW_MS = 10000;       // soft-error counting 
   #endif
 #endif
 
+// Runtime microflac debug switch (UART/telnet command-controlled).
+// Default follows build-time OMNIA_DEBUG_MICROFLAC (DEBUG builds start verbose).
+volatile bool g_omnia_microflac_debug = (OMNIA_DEBUG_MICROFLAC != 0);
+
+void omnia_microflac_set_debug(bool en) { g_omnia_microflac_debug = en; }
+bool omnia_microflac_get_debug() { return g_omnia_microflac_debug; }
+
 // Log59: humanize micro-flac error codes for diagnostics
 static const char* mfErrName(int e){
     switch(e){
@@ -6049,11 +6056,11 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                     static uint32_t s_mfSlowMs = 0;
                     if (dt_us > 20000 && (millis() - s_mfSlowMs) > 700) {
                         s_mfSlowMs = millis();
-#if OMNIA_DEBUG_MICROFLAC
+if (g_omnia_microflac_debug) {
                         AUDIO_ERROR("microflac SLOW decode dt=%luus left=%u out=%u hdr=%u",
                                     (unsigned long)dt_us, (unsigned)left,
                                     (unsigned)(out != nullptr), (unsigned)m_mf_header_ready);
-#endif
+}
                     }
                     m_mf_lastRes = (int8_t)mf_res;
 
@@ -6068,13 +6075,13 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                             static uint32_t s_adoptMs = 0;
                             if (millis() - s_adoptMs > 700) {
                                 s_adoptMs = millis();
-#if OMNIA_DEBUG_MICROFLAC
+if (g_omnia_microflac_debug) {
                                 AUDIO_INFO("microflac adopt demux_cons=%u (left=%u) ogg_res=%d(%s) pktLen=%u endpkt=%u",
                                            (unsigned)demux_cons, (unsigned)left,
                                            (int)g_mf.get_last_ogg_res(), oggDemuxName((int)g_mf.get_last_ogg_res()),
                                            (unsigned)g_mf.get_last_ogg_packet_len(),
                                            (unsigned)g_mf.get_last_ogg_packet_endpkt());
-#endif
+}
                             }
                         }
                     }
@@ -6196,7 +6203,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                             m_mf_zeroConsumeCnt++;
                             // soft log first 3 and every 25
                             if(m_mf_zeroConsumeCnt <= 3 || (m_mf_zeroConsumeCnt % 25) == 0){
-#if OMNIA_DEBUG_MICROFLAC
+if (g_omnia_microflac_debug) {
                                 AUDIO_INFO("microflac NEED_MORE zero_cons=%u filled=%u header=%u left=%u out=%u lastRes=%d",
                                            (unsigned)m_mf_zeroConsumeCnt,
                                            (unsigned)InBuff.bufferFilled(),
@@ -6258,7 +6265,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                                         (unsigned)g_mf.get_last_ogg_body_prefix(7)
                                     );
                                 }
-#endif
+}
                             }
                         }
                         // OMNIA-PATCH Log63: NEED_MORE может быть с прогрессом (bytes_consumed>0), но без PCM.
@@ -6267,7 +6274,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                             static uint32_t s_needMoreProgMs = 0;
                             if(millis() - s_needMoreProgMs > 700){
                                 s_needMoreProgMs = millis();
-#if OMNIA_DEBUG_MICROFLAC
+if (g_omnia_microflac_debug) {
                                 AUDIO_INFO("microflac NEED_MORE(progress) cons=%u total_cons=%u left=%u filled=%u header=%u",
                                            (unsigned)bytes_consumed, (unsigned)total_consumed, (unsigned)left,
                                            (unsigned)InBuff.bufferFilled(), (unsigned)m_mf_header_ready);
@@ -6324,7 +6331,7 @@ int Audio::sendBytes(uint8_t* data, size_t len) {
                                         (unsigned)g_mf.get_last_chunk_prefix(7)
                                     );
                                 }
-#endif
+}
                             }
                         }
                         // If we consumed bytes and still have input left in this same window,
