@@ -43,7 +43,7 @@ constexpr uint8_t   MF_WEB_MAX_LOOPS = 8;         // decode() loops per sendByte
 constexpr uint32_t  MF_WEB_GRACE_AFTER_HEADER_MS = 4000; // after HEADER_READY: no reconnect due to zero-consume
 constexpr uint32_t  MF_WEB_STALL_MS = 8000;              // generic time-based stall threshold
 constexpr uint8_t   MF_WEB_ZERO_CONSUME_LIMIT = 80;      // cycles with bytes_consumed==0 before reconnect
-constexpr uint8_t   MF_WEB_ERR_SOFT_LIMIT = 24;          // soft errors per window before reconnect (not 31/1s!)
+constexpr uint8_t   MF_WEB_ERR_SOFT_LIMIT = 200;          // soft errors per window before reconnect (not 31/1s!)
 constexpr uint32_t  MF_WEB_SOFT_WINDOW_MS = 10000;       // soft-error counting window
 
 // =============================================================
@@ -4915,8 +4915,10 @@ void Audio::playAudioData() {
                         InBuff.changeMaxBlockSize((uint16_t)newBlock);
                         m_mf_webBlock = InBuff.getMaxBlockSize();
                         m_mf_feedCap = m_mf_webBlock;
+                        if (g_omnia_microflac_debug) {
                         AUDIO_INFO("microflac ogg page total=%u grow block %u->%u filled=%u",
                                    (unsigned)pageTotal, (unsigned)curBlock, (unsigned)m_mf_webBlock, (unsigned)filled);
+                        }
                         curBlock = m_mf_webBlock;
                         m_pad.bytesToDecode = min(filled, (size_t)curBlock);
                     }
@@ -6187,7 +6189,8 @@ if (g_omnia_microflac_debug) {
                             m_mf_prevErr = 0;
                             // log first 5 and every 50 (acceptance visibility without spam)
                             static uint32_t s_mfSuccessCnt = 0;
-                            if(s_mfSuccessCnt < 5 || (s_mfSuccessCnt % 50) == 0){
+                            if ((g_omnia_microflac_debug && (s_mfSuccessCnt < 5 || (s_mfSuccessCnt % 50) == 0)) ||
+                                (!g_omnia_microflac_debug && s_mfSuccessCnt == 0)) {
                                 AUDIO_INFO("microflac SUCCESS samples=%u bps=%u consumed=%u total_cons=%u filled=%u",
                                            (unsigned)samples_decoded, (unsigned)m_mf_bits, (unsigned)bytes_consumed,
                                            (unsigned)total_consumed, (unsigned)InBuff.bufferFilled());

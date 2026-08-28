@@ -113,7 +113,7 @@ public:
     void     resetBuffer();                     // restore defaults
 
 protected:
-    size_t            m_buffSize         = UINT16_MAX * 10;   // most webstreams limit the advance to 100...300Kbytes
+    size_t            m_buffSize         = UINT16_MAX * 32; // ~2.0 MB buffer for flagship FLAC stability
     size_t            m_freeSpace        = 0;
     size_t            m_writeSpace       = 0;
     size_t            m_dataLength       = 0;

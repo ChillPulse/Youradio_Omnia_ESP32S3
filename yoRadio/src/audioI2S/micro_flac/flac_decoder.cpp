@@ -185,6 +185,10 @@ void FLACDecoder::reset() {
     this->ogg_bos_processed_ = false;
     this->ogg_bos_prefix_consumed_ = 0;
     this->ogg_eos_seen_ = false;
+    this->ogg_mapping_minor_ = 0;
+    this->ogg_header_packets_total_ = 0;
+    this->ogg_header_packets_remaining_ = 0;
+    this->ogg_header_packets_known_ = false;
     this->last_ogg_body_len_ = 0;
     this->last_ogg_native_consumed_ = 0;
     this->last_ogg_is_end_of_packet_ = 0;
@@ -639,9 +643,10 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
                     continue;
                 }
 
-                // No full "OggS" found in this window: keep last 3 bytes for boundary match.
-                if (input_len > 3 && bytes_consumed < input_len - 3) {
-                    bytes_consumed = input_len - 3;
+                // No full "OggS" found in this window: advance gradually (keep 3-byte overlap), not drop entire buffer.
+                if (scan_limit > 3) {
+                    bytes_consumed += (scan_limit - 3);
+                    continue;
                 }
                 return FLAC_DECODER_NEED_MORE_DATA;
             }
@@ -682,6 +687,21 @@ FLACDecoderResult FLACDecoder::decode_ogg(const uint8_t* input, size_t input_len
                 uint8_t idx = this->ogg_bos_prefix_consumed_;
                 if (idx < 6 && body[0] != BOS_PREFIX[idx]) {
                     return this->set_fatal_error(FLAC_DECODER_ERROR_OGG_BAD_HEADER);
+                }
+                // idx layout per Ogg-FLAC mapping:
+                // 0..5: 0x7F 'F''L''A''C' 0x01(major)
+                // 6: minor
+                // 7..8: num_header_packets (big-endian)
+                if (idx == 6) {
+                    this->ogg_mapping_minor_ = body[0];
+                }
+                if (idx == 7) {
+                    this->ogg_header_packets_total_ = ((uint16_t)body[0]) << 8;
+                }
+                if (idx == 8) {
+                    this->ogg_header_packets_total_ |= (uint16_t)body[0];
+                    this->ogg_header_packets_remaining_ = this->ogg_header_packets_total_;
+                    this->ogg_header_packets_known_ = (this->ogg_header_packets_total_ != 0);
                 }
                 this->ogg_bos_prefix_consumed_++;
                 body++;
@@ -883,6 +903,10 @@ FLACDecoderResult FLACDecoder::read_header(const uint8_t* buffer, size_t buffer_
             if (this->header_parse_.bytes_read == this->header_parse_.length) {
                 this->header_parse_.length = 0;
                 this->header_parse_.bytes_read = 0;
+                if (this->container_type_ == ContainerType::OGG_FLAC && this->ogg_header_packets_known_ &&
+                    this->header_parse_.type != FLAC_METADATA_TYPE_STREAMINFO && this->ogg_header_packets_remaining_ > 0) {
+                    this->ogg_header_packets_remaining_--;
+                }
             }
         } else {
             // Allocate data buffer once when block parsing starts
@@ -921,6 +945,10 @@ FLACDecoderResult FLACDecoder::read_header(const uint8_t* buffer, size_t buffer_
 
                 this->header_parse_.length = 0;
                 this->header_parse_.bytes_read = 0;
+                if (this->container_type_ == ContainerType::OGG_FLAC && this->ogg_header_packets_known_ &&
+                    this->header_parse_.type != FLAC_METADATA_TYPE_STREAMINFO && this->ogg_header_packets_remaining_ > 0) {
+                    this->ogg_header_packets_remaining_--;
+                }
             }
         }
     }
@@ -1853,6 +1881,44 @@ void FLACDecoder::reset_bit_buffer() {
 // ============================================================================
 
 void FLACDecoder::set_buffer(const uint8_t* buf, size_t len, bool reset_bits) {
+    this->buffer_ = buf;
+    this->buffer_index_ = 0;
+    this->bytes_left_ = len;
+    this->out_of_data_ = false;
+    if (reset_bits) {
+        this->bit_buffer_ = 0;
+        this->bit_buffer_length_ = 0;
+    }
+}
+
+void FLACDecoder::free_buffers() {
+    if (this->block_samples_) {
+        FLAC_FREE(this->block_samples_);
+        this->block_samples_ = nullptr;
+    }
+
+    if (this->side_subframe_) {
+        FLAC_FREE(this->side_subframe_);
+        this->side_subframe_ = nullptr;
+    }
+
+#ifndef MICRO_FLAC_DISABLE_OGG
+    // Clean up Ogg demuxer
+    this->ogg_demuxer_.reset();
+#endif
+
+    // Clear metadata blocks (destructors free each block's data via FLAC_FREE)
+    this->metadata_blocks_.reset();
+
+    // Free header parse buffer
+    if (this->header_parse_.data) {
+        FLAC_FREE(this->header_parse_.data);
+        this->header_parse_.data = nullptr;
+    }
+}
+
+}  // namespace micro_flac
+const uint8_t* buf, size_t len, bool reset_bits) {
     this->buffer_ = buf;
     this->buffer_index_ = 0;
     this->bytes_left_ = len;

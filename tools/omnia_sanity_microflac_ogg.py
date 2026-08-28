@@ -157,5 +157,33 @@ if "FLAC_DECODER_ERROR_OGG_DEMUX" not in a35 or "FLAC_DECODER_ERROR_OGG_BAD_HEAD
     print("FAIL: missing restricted reset condition markers (-14/-15) in Audio.cpp")
     sys.exit(2)
 
+if "ogg_header_packets_remaining_" not in ht:
+    print("FAIL: missing ogg_header_packets_remaining_ in flac_decoder.h")
+    sys.exit(2)
+if "ogg_header_packets_known_" not in ht:
+    print("FAIL: missing ogg_header_packets_known_ in flac_decoder.h")
+    sys.exit(2)
+if "ogg_header_packets_remaining_--" not in txt:
+    print("FAIL: missing ogg_header_packets_remaining_-- in flac_decoder.cpp")
+    sys.exit(2)
+if "ogg_header_packets_known_" not in txt:
+    print("FAIL: missing ogg_header_packets_known_ in flac_decoder.cpp")
+    sys.exit(2)
+if "idx == 8" not in txt:
+    print("FAIL: missing idx == 8 (header packet count parse) in flac_decoder.cpp")
+    sys.exit(2)
+if "scan_limit - 3" not in txt:
+    print("FAIL: missing scan_limit - 3 (incremental resync) in flac_decoder.cpp")
+    sys.exit(2)
+
+ex = Path("yoRadio/src/audioI2S/AudioEx.h").read_text(encoding="utf-8", errors="replace")
+if "UINT16_MAX * 32" not in ex:
+    print("FAIL: missing UINT16_MAX * 32 in AudioEx.h")
+    sys.exit(2)
+
+if "s_mfSuccessCnt == 0" not in a35:
+    print("FAIL: missing s_mfSuccessCnt == 0 (quiet SUCCESS log) in Audio.cpp")
+    sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)

@@ -722,6 +722,12 @@ private:
     uint8_t ogg_bos_prefix_consumed_{0};  // 0-9 tracks BOS prefix validation progress
     bool ogg_bos_processed_{false};
     bool ogg_eos_seen_{false};  // EOS flag from demuxer
+    // Ogg-FLAC mapping header packets count (Xiph/RFC9639):
+    // number of header (non-audio) packets following the first BOS packet.
+    uint8_t  ogg_mapping_minor_{0};
+    uint16_t ogg_header_packets_total_{0};
+    uint16_t ogg_header_packets_remaining_{0};
+    bool     ogg_header_packets_known_{false};
     int8_t   last_ogg_result_ = 0;
     uint32_t last_ogg_serial_ = 0;
     uint32_t last_ogg_sequence_ = 0;
