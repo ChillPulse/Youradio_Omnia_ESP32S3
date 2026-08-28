@@ -184,6 +184,12 @@ if "UINT16_MAX * 32" not in ex:
 if "s_mfSuccessCnt == 0" not in a35:
     print("FAIL: missing s_mfSuccessCnt == 0 (quiet SUCCESS log) in Audio.cpp")
     sys.exit(2)
+if "omnia_emit_bitrate(" not in a35:
+    print("FAIL: missing omnia_emit_bitrate( in Audio.cpp")
+    sys.exit(2)
+if "MF_WEB_ERR_SOFT_LIMIT = 200" not in a35:
+    print("FAIL: missing MF_WEB_ERR_SOFT_LIMIT = 200 in Audio.cpp")
+    sys.exit(2)
 
 # flac_decoder.cpp must end exactly once with namespace close; no trailing duplicate tail
 if txt.count("}  // namespace micro_flac") != 1:

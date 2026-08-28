@@ -43,7 +43,7 @@ constexpr uint8_t   MF_WEB_MAX_LOOPS = 8;         // decode() loops per sendByte
 constexpr uint32_t  MF_WEB_GRACE_AFTER_HEADER_MS = 4000; // after HEADER_READY: no reconnect due to zero-consume
 constexpr uint32_t  MF_WEB_STALL_MS = 8000;              // generic time-based stall threshold
 constexpr uint8_t   MF_WEB_ZERO_CONSUME_LIMIT = 80;      // cycles with bytes_consumed==0 before reconnect
-constexpr uint8_t   MF_WEB_ERR_SOFT_LIMIT = 200;          // soft errors per window before reconnect (not 31/1s!)
+constexpr uint16_t  MF_WEB_ERR_SOFT_LIMIT = 200;  // flagship: avoid reconnect storms on transient packet issues
 constexpr uint32_t  MF_WEB_SOFT_WINDOW_MS = 10000;       // soft-error counting window
 
 // =============================================================
@@ -63,6 +63,7 @@ volatile bool g_omnia_microflac_debug = (OMNIA_DEBUG_MICROFLAC != 0);
 
 void omnia_microflac_set_debug(bool en) { g_omnia_microflac_debug = en; }
 bool omnia_microflac_get_debug() { return g_omnia_microflac_debug; }
+static void omnia_emit_bitrate(uint32_t br);
 
 // Log59: humanize micro-flac error codes for diagnostics
 static const char* mfErrName(int e){
@@ -4208,11 +4209,16 @@ bool Audio::stallReconnect(const char* reason){
     m_mf_reconnecting = true;
     // 3) serialize against user API (connecttohost/connecttoFS) with a timeout;
     //    proceed even on timeout - stopSong() itself waits for the decode step to end
-    bool haveMutex = (xSemaphoreTakeRecursive(mutex_playAudioData, 0.3 * configTICK_RATE_HZ) == pdTRUE);
+    bool haveMutex = (xSemaphoreTakeRecursive(mutex_playAudioData, 0.8 * configTICK_RATE_HZ) == pdTRUE);
+    if(!haveMutex){
+        // Don't force stop/free while decode path may still be running -> avoids Guru Meditation.
+        m_mf_reconnecting = false;
+        return false;
+    }
     stopSong();               // closes the active client safely (null-checked inside)
     InBuff.resetBuffer();     // discard stale bitstream (demuxer restarts from scratch)
     microflac_reset_();       // free pending/out32 under the frozen decode path
-    if(haveMutex) xSemaphoreGiveRecursive(mutex_playAudioData);
+    xSemaphoreGiveRecursive(mutex_playAudioData);
     m_mf_reconnecting = false;
     // 4) reconnect only now, with the local URL copy; caller MUST return 0 right after
     return connecttohost(url.get());
@@ -5175,6 +5181,7 @@ bool Audio::parseHttpResponseHeader() { // this is the response to a GET / reque
             else m_phreh.bitrate = c_bitRate.to_uint32(10);
             m_nominal_bitrate = c_bitRate.to_uint32(10);
             AUDIO_INFO("icy-bitrate : %lu (b/s)", m_nominal_bitrate);
+            omnia_emit_bitrate(m_nominal_bitrate);
 //            info(evt_bitrate, c_bitRate.c_get());
 //            AUDIO_INFO("BitRate: %lu", m_nominal_bitrate);
 //            audio_bitrate(c_bitRate.c_get());
@@ -5755,6 +5762,12 @@ void Audio::showstreamtitle(char* ml) {
     /*info(evt_streamtitle,*/ audio_showstreamtitle(m_streamTitle.c_get());
 }
 //****************************************************************************************
+static void omnia_emit_bitrate(uint32_t br){
+    if(!audio_bitrate) return;
+    char b[16];
+    snprintf(b, sizeof(b), "%lu", (unsigned long)br);
+    audio_bitrate(b);
+}
 void Audio::showCodecParams() {
 
     AUDIO_INFO("Channels: %u", getChannels());
@@ -6111,6 +6124,16 @@ if (g_omnia_microflac_debug) {
                         setSampleRate(m_mf_sample_rate);
                         setBitsPerSample(m_mf_bits);
 
+                        // Ensure BitRate is never N/A for micro-flac: use decoded PCM bitrate as a floor.
+                        // (UI expects a number; stream bitrate may arrive later via icy-br.)
+                        if (m_nominal_bitrate == 0 && getChannels() && getSampleRate() && getBitsPerSample()) {
+                            uint64_t pcm_br = (uint64_t)getChannels() * (uint64_t)getSampleRate() * (uint64_t)getBitsPerSample();
+                            if (pcm_br > 0 && pcm_br < 100000000ULL) { // sanity clamp
+                                m_nominal_bitrate = (uint32_t)pcm_br;
+                                omnia_emit_bitrate(m_nominal_bitrate);
+                            }
+                        }
+
                         // --- FLAGSHIP: replicate the important tail of setDecoderItems() without calling legacy FLACGet* ---
                         // NOTE: do NOT stopSong on a 24-bit source - it is valid for WEB FLAC (Log59 Indigo)
                         if(m_sourceBitsPerSample != 8 && m_sourceBitsPerSample != 16 && m_sourceBitsPerSample != 24 && m_sourceBitsPerSample != 32) {
@@ -6182,6 +6205,11 @@ if (g_omnia_microflac_debug) {
                         if(samples_decoded && m_mf_out32){
                             m_mf_pending_total = samples_decoded;
                             m_mf_pending_off = 0;
+                            // Update bitrate/time estimator for micro-flac too (otherwise getBitRate() stays 0 on some stations).
+                            // bytes_consumed = compressed bytes in; samples_decoded = interleaved samples out (16-bit output path).
+                            uint32_t bytesIn  = (bytes_consumed > 65535) ? 65535 : (uint32_t)bytes_consumed;
+                            uint32_t bytesOut = (samples_decoded > 32767) ? 65534 : (uint32_t)(samples_decoded * 2); // int16
+                            calculateAudioTime((uint16_t)bytesIn, (uint16_t)bytesOut);
                             m_lastGoodDecodeMs = millis();
                             m_mf_lastProgressMs = millis();
                             m_mf_zeroConsumeCnt = 0; // SUCCESS may come with consumed==0 (zero-copy packet)
@@ -6429,7 +6457,13 @@ if (g_omnia_microflac_debug) {
                         m_mf_errWindowMs = millis();
                         m_mf_errSoftCnt = 0;
                     }
-                    m_mf_errSoftCnt++;
+                    bool severe = ((int)mf_res == micro_flac::FLAC_DECODER_ERROR_OGG_DEMUX ||
+                                   (int)mf_res == micro_flac::FLAC_DECODER_ERROR_OGG_BAD_HEADER ||
+                                   (int)mf_res == micro_flac::FLAC_DECODER_ERROR_INPUT_INVALID);
+
+                    if (severe || bytes_consumed == 0) {
+                        m_mf_errSoftCnt++;
+                    }
                     if(m_mf_errSoftCnt > MF_WEB_ERR_SOFT_LIMIT){
                         AUDIO_ERROR("microflac too many soft errors (%u/10s) -> reconnect", (unsigned)m_mf_errSoftCnt);
                         stallReconnect("mfSoftErrBurst");
