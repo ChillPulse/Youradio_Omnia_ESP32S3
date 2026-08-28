@@ -185,5 +185,23 @@ if "s_mfSuccessCnt == 0" not in a35:
     print("FAIL: missing s_mfSuccessCnt == 0 (quiet SUCCESS log) in Audio.cpp")
     sys.exit(2)
 
+# flac_decoder.cpp must end exactly once with namespace close; no trailing duplicate tail
+if txt.count("}  // namespace micro_flac") != 1:
+    print("FAIL: expected exactly one '}  // namespace micro_flac' in flac_decoder.cpp")
+    sys.exit(2)
+
+lines = [l.strip() for l in txt.splitlines() if l.strip() != ""]
+if not lines or lines[-1] != "}  // namespace micro_flac":
+    print("FAIL: flac_decoder.cpp must end with '}  // namespace micro_flac'")
+    sys.exit(2)
+
+# Ensure set_buffer/free_buffers definitions exist exactly once
+if txt.count("void FLACDecoder::set_buffer") != 1:
+    print("FAIL: expected exactly one FLACDecoder::set_buffer definition")
+    sys.exit(2)
+if txt.count("void FLACDecoder::free_buffers") != 1:
+    print("FAIL: expected exactly one FLACDecoder::free_buffers definition")
+    sys.exit(2)
+
 print("OK: microflac ogg stash/endpkt sanity checks passed")
 sys.exit(0)
